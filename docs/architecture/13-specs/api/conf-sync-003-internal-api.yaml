@@ -1,0 +1,593 @@
+openapi: 3.0.3
+
+info:
+  title: Git Integration Internal API
+  description: |
+    Internal API for git-based conflict resolution in confluence-bidir-sync.
+
+    This is NOT a REST API - it's a Python module API specification.
+    Used for Auto Claude implementation guidance.
+
+    **Epic**: CONF-SYNC-003 - Git Integration
+  version: 1.0.0
+  contact:
+    name: confluence-bidir-sync
+    url: https://github.com/example/confluence-bidir-sync
+
+paths:
+  # This is an internal Python API, not HTTP endpoints
+  # Paths represent module methods for documentation purposes
+
+  /git_repository/init:
+    post:
+      summary: Initialize git repository
+      description: Initialize git repo at specified path if it doesn't exist
+      operationId: git_repository_init
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [repo_path]
+              properties:
+                repo_path:
+                  type: string
+                  description: Path to git repository
+                  example: ".confluence-sync/MYSPACE_md"
+      responses:
+        '200':
+          description: Repository initialized successfully
+        '500':
+          description: Initialization failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitRepositoryError'
+
+  /git_repository/commit:
+    post:
+      summary: Commit version to git repo
+      description: Commit markdown version to git repository
+      operationId: git_repository_commit_version
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [page_id, markdown, version]
+              properties:
+                page_id:
+                  type: string
+                  pattern: "^[0-9]+$"
+                  example: "123456"
+                markdown:
+                  type: string
+                  description: Markdown content to commit
+                version:
+                  type: integer
+                  minimum: 1
+                  example: 15
+                message:
+                  type: string
+                  description: Optional commit message
+                  example: "Custom commit message"
+      responses:
+        '200':
+          description: Version committed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commit_sha:
+                    type: string
+                    example: "a1b2c3d4e5f6"
+        '500':
+          description: Commit failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitRepositoryError'
+
+  /git_repository/version:
+    get:
+      summary: Retrieve version from git history
+      description: Get markdown content for specific version from git commit history
+      operationId: git_repository_get_version
+      parameters:
+        - name: page_id
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9]+$"
+        - name: version
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Version found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  markdown:
+                    type: string
+                    description: Markdown content from git history
+        '404':
+          description: Version not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitRepositoryError'
+
+  /cache/get:
+    get:
+      summary: Retrieve XHTML from cache
+      description: Get cached XHTML if timestamp valid
+      operationId: xhtml_cache_get
+      parameters:
+        - name: page_id
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9]+$"
+        - name: version
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: last_modified
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+            description: Confluence last_modified timestamp
+      responses:
+        '200':
+          description: Cache hit
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  xhtml:
+                    type: string
+                    description: Cached XHTML content
+        '404':
+          description: Cache miss (not found or stale)
+
+  /cache/put:
+    post:
+      summary: Store XHTML in cache
+      description: Cache XHTML with metadata for future retrieval
+      operationId: xhtml_cache_put
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [page_id, version, xhtml, last_modified]
+              properties:
+                page_id:
+                  type: string
+                  pattern: "^[0-9]+$"
+                version:
+                  type: integer
+                  minimum: 1
+                xhtml:
+                  type: string
+                  description: XHTML content to cache
+                last_modified:
+                  type: string
+                  format: date-time
+      responses:
+        '200':
+          description: Cached successfully
+        '500':
+          description: Cache write failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CacheError'
+
+  /conflict_detector/detect:
+    post:
+      summary: Batch detect conflicts
+      description: Detect version conflicts for multiple pages in parallel
+      operationId: conflict_detector_detect_conflicts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [local_pages]
+              properties:
+                local_pages:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/LocalPage'
+      responses:
+        '200':
+          description: Detection complete
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConflictDetectionResult'
+
+  /conflict_detector/merge_inputs:
+    get:
+      summary: Get three-way merge inputs
+      description: Fetch base, local (cached), and remote markdown for merge
+      operationId: conflict_detector_get_three_way_merge_inputs
+      parameters:
+        - name: page_id
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9]+$"
+        - name: local_version
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: remote_version
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Merge inputs fetched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThreeWayMergeInputs'
+        '404':
+          description: Base version not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitRepositoryError'
+
+  /merge_orchestrator/sync:
+    post:
+      summary: Perform bidirectional sync
+      description: Sync with conflict resolution (main workflow)
+      operationId: merge_orchestrator_sync
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [local_pages]
+              properties:
+                local_pages:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/LocalPage'
+                strategy:
+                  $ref: '#/components/schemas/MergeStrategy'
+      responses:
+        '200':
+          description: Sync complete
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncResult'
+        '409':
+          description: Unresolved conflicts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MergeConflictError'
+
+  /merge_orchestrator/force_push:
+    post:
+      summary: Force push local to Confluence
+      description: Overwrite Confluence with local content (no conflict detection)
+      operationId: merge_orchestrator_force_push
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [local_pages]
+              properties:
+                local_pages:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/LocalPage'
+      responses:
+        '200':
+          description: Force push complete
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncResult'
+
+  /merge_orchestrator/force_pull:
+    post:
+      summary: Force pull Confluence to local
+      description: Overwrite local with Confluence content (no conflict detection)
+      operationId: merge_orchestrator_force_pull
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [page_ids]
+              properties:
+                page_ids:
+                  type: array
+                  items:
+                    type: string
+                    pattern: "^[0-9]+$"
+      responses:
+        '200':
+          description: Force pull complete
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncResult'
+
+  /merge_tool/validate:
+    get:
+      summary: Validate merge tool available
+      description: Check if configured merge tool is installed in PATH
+      operationId: merge_tool_validate_available
+      parameters:
+        - name: tool_name
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [vscode, vim, meld, kdiff3, custom]
+      responses:
+        '200':
+          description: Tool validation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  available:
+                    type: boolean
+
+  /merge_tool/launch:
+    post:
+      summary: Launch merge tool
+      description: Launch external merge tool for conflict resolution
+      operationId: merge_tool_launch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [local_file, base_file, remote_file, output_file]
+              properties:
+                local_file:
+                  type: string
+                  description: Path to local version
+                base_file:
+                  type: string
+                  description: Path to base version
+                remote_file:
+                  type: string
+                  description: Path to remote version
+                output_file:
+                  type: string
+                  description: Path to save merged result
+      responses:
+        '200':
+          description: Merge tool completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MergeToolResult'
+        '500':
+          description: Merge tool failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MergeToolError'
+
+components:
+  schemas:
+    MergeStrategy:
+      type: string
+      enum: [three_way, force_push, force_pull]
+      description: Strategy for sync operation
+      default: three_way
+
+    LocalPage:
+      type: object
+      required: [page_id, file_path, local_version, title]
+      properties:
+        page_id:
+          type: string
+          pattern: "^[0-9]+$"
+        file_path:
+          type: string
+        local_version:
+          type: integer
+          minimum: 1
+        title:
+          type: string
+
+    ConflictInfo:
+      type: object
+      required: [page_id, file_path, local_version, remote_version, has_base]
+      properties:
+        page_id:
+          type: string
+          pattern: "^[0-9]+$"
+        file_path:
+          type: string
+        local_version:
+          type: integer
+          minimum: 1
+        remote_version:
+          type: integer
+          minimum: 1
+        has_base:
+          type: boolean
+
+    ConflictDetectionResult:
+      type: object
+      required: [conflicts, auto_mergeable, errors]
+      properties:
+        conflicts:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConflictInfo'
+        auto_mergeable:
+          type: array
+          items:
+            $ref: '#/components/schemas/LocalPage'
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              page_id:
+                type: string
+              error_message:
+                type: string
+
+    ThreeWayMergeInputs:
+      type: object
+      required: [page_id, base_markdown, local_markdown, remote_markdown, local_version, remote_version]
+      properties:
+        page_id:
+          type: string
+        base_markdown:
+          type: string
+        local_markdown:
+          type: string
+        remote_markdown:
+          type: string
+        local_version:
+          type: integer
+        remote_version:
+          type: integer
+
+    MergeResult:
+      type: object
+      required: [success, merged_markdown, git_output]
+      properties:
+        success:
+          type: boolean
+        merged_markdown:
+          type: string
+        conflict_file:
+          type: string
+          nullable: true
+        git_output:
+          type: string
+
+    MergeToolResult:
+      type: object
+      required: [success, resolved_content]
+      properties:
+        success:
+          type: boolean
+        resolved_content:
+          type: string
+        error:
+          type: string
+          nullable: true
+
+    SyncResult:
+      type: object
+      required: [success, pages_synced, pages_failed, conflicts_resolved, errors]
+      properties:
+        success:
+          type: boolean
+        pages_synced:
+          type: integer
+          minimum: 0
+        pages_failed:
+          type: integer
+          minimum: 0
+        conflicts_resolved:
+          type: integer
+          minimum: 0
+        errors:
+          type: object
+          additionalProperties:
+            type: string
+
+    GitRepositoryError:
+      type: object
+      required: [code, message, repo_path]
+      properties:
+        code:
+          type: string
+          pattern: "^GIT-[0-9]{3}$"
+        message:
+          type: string
+        repo_path:
+          type: string
+        git_output:
+          type: string
+
+    MergeConflictError:
+      type: object
+      required: [code, message, conflicts]
+      properties:
+        code:
+          type: string
+          pattern: "^GIT-[0-9]{3}$"
+        message:
+          type: string
+        conflicts:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConflictInfo'
+
+    MergeToolError:
+      type: object
+      required: [code, message, tool_name]
+      properties:
+        code:
+          type: string
+          pattern: "^GIT-[0-9]{3}$"
+        message:
+          type: string
+        tool_name:
+          type: string
+        error:
+          type: string
+
+    CacheError:
+      type: object
+      required: [code, message, cache_path]
+      properties:
+        code:
+          type: string
+          pattern: "^GIT-[0-9]{3}$"
+        message:
+          type: string
+        cache_path:
+          type: string
+        error:
+          type: string

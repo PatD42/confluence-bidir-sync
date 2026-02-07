@@ -1,0 +1,378 @@
+# Internal API Specification - Extended Features
+# Epic: CONF-SYNC-005
+# Components: DeletionHandler, MoveHandler, AncestorResolver, BaselineManager, ConflictResolver
+
+openapi: 3.0.3
+info:
+  title: Extended Features Internal API
+  version: 1.0.0
+  description: Internal interfaces for deletion, move, and 3-way merge conflict resolution
+
+components:
+  schemas:
+    # Reference external schemas - Deletion & Move
+    DeletionInfo:
+      $ref: '../schemas/domain/conf-sync-005-extended-models.json#/definitions/DeletionInfo'
+    MoveInfo:
+      $ref: '../schemas/domain/conf-sync-005-extended-models.json#/definitions/MoveInfo'
+    DeletionResult:
+      $ref: '../schemas/domain/conf-sync-005-extended-models.json#/definitions/DeletionResult'
+    MoveResult:
+      $ref: '../schemas/domain/conf-sync-005-extended-models.json#/definitions/MoveResult'
+    TrackedPage:
+      $ref: '../schemas/domain/conf-sync-005-extended-models.json#/definitions/TrackedPage'
+    # Reference external schemas - Merge & Conflict
+    MergeResult:
+      $ref: '../schemas/domain/conf-sync-005-extended-models.json#/definitions/MergeResult'
+    ConflictInfo:
+      $ref: '../schemas/domain/conf-sync-005-extended-models.json#/definitions/ConflictInfo'
+    ConflictResolutionResult:
+      $ref: '../schemas/domain/conf-sync-005-extended-models.json#/definitions/ConflictResolutionResult'
+
+---
+# Python Interface Specifications
+
+interfaces:
+  ChangeDetector:
+    module: src/cli/change_detector.py
+    description: Extended change detection with deletion and move support
+    methods:
+      - name: detect_deletions
+        description: Compare tracked pages against current state
+        parameters:
+          - name: tracked_page_ids
+            type: Set[str]
+            description: page_ids from state.yaml tracked_pages
+          - name: local_page_ids
+            type: Set[str]
+            description: page_ids found in current local files
+          - name: remote_page_ids
+            type: Set[str]
+            description: page_ids returned from Confluence CQL
+        returns:
+          type: DeletionResult
+          description: Deletions categorized by direction
+
+      - name: detect_moves
+        description: Compare folder structure with Confluence ancestors
+        parameters:
+          - name: local_pages
+            type: List[LocalPage]
+            description: Local pages with paths
+          - name: remote_pages
+            type: List[PageNode]
+            description: Remote pages with ancestors
+        returns:
+          type: MoveResult
+          description: Moves categorized by direction
+
+  DeletionHandler:
+    module: src/cli/deletion_handler.py
+    description: Execute deletion operations
+    constructor:
+      parameters:
+        - name: file_mapper
+          type: FileMapper
+        - name: page_operations
+          type: PageOperations
+        - name: output
+          type: OutputHandler
+    methods:
+      - name: delete_local_files
+        description: Delete local files for pages removed from Confluence
+        parameters:
+          - name: deletions
+            type: List[DeletionInfo]
+          - name: dryrun
+            type: bool
+            default: false
+        returns:
+          type: int
+          description: Count of files deleted
+
+      - name: delete_confluence_pages
+        description: Trash Confluence pages for files removed locally
+        parameters:
+          - name: deletions
+            type: List[DeletionInfo]
+          - name: dryrun
+            type: bool
+            default: false
+        returns:
+          type: int
+          description: Count of pages trashed
+
+  MoveHandler:
+    module: src/cli/move_handler.py
+    description: Execute move operations
+    constructor:
+      parameters:
+        - name: file_mapper
+          type: FileMapper
+        - name: page_operations
+          type: PageOperations
+        - name: output
+          type: OutputHandler
+    methods:
+      - name: move_local_files
+        description: Move local files to match Confluence hierarchy
+        parameters:
+          - name: moves
+            type: List[MoveInfo]
+          - name: dryrun
+            type: bool
+            default: false
+        returns:
+          type: int
+          description: Count of files moved
+
+      - name: move_confluence_pages
+        description: Update Confluence parents to match local hierarchy
+        parameters:
+          - name: moves
+            type: List[MoveInfo]
+          - name: dryrun
+            type: bool
+            default: false
+        returns:
+          type: int
+          description: Count of pages updated
+
+      - name: resolve_parent_page_id
+        description: Find Confluence page_id for a local folder path
+        parameters:
+          - name: local_path
+            type: Path
+            description: Target folder path
+          - name: page_mapping
+            type: Dict[Path, str]
+            description: Known path to page_id mappings
+        returns:
+          type: Optional[str]
+          description: page_id or None if root
+
+  AncestorResolver:
+    module: src/cli/ancestor_resolver.py
+    description: Fetch and parse Confluence page ancestors
+    constructor:
+      parameters:
+        - name: api_wrapper
+          type: ConfluenceAPIWrapper
+    methods:
+      - name: fetch_with_ancestors
+        description: Fetch pages with ancestors expansion
+        parameters:
+          - name: space_key
+            type: str
+          - name: parent_page_id
+            type: Optional[str]
+            default: null
+        returns:
+          type: List[PageNode]
+          description: Pages with populated ancestors
+
+      - name: get_parent_chain
+        description: Extract parent page_ids from ancestors
+        parameters:
+          - name: page
+            type: PageNode
+        returns:
+          type: List[str]
+          description: Parent page_ids, closest first
+
+      - name: build_path_from_ancestors
+        description: Convert ancestor chain to expected local path
+        parameters:
+          - name: page
+            type: PageNode
+          - name: page_titles
+            type: Dict[str, str]
+            description: page_id to title mapping
+        returns:
+          type: Path
+          description: Expected local file path
+
+  BaselineManager:
+    module: src/cli/baseline_manager.py
+    description: Manage hidden git repo for 3-way merge baselines
+    constructor:
+      parameters:
+        - name: baseline_path
+          type: Path
+          default: ".confluence-sync/baseline"
+    methods:
+      - name: initialize
+        description: Create baseline repo if not exists
+        parameters: []
+        returns:
+          type: None
+        behavior:
+          - Create .confluence-sync/baseline/ directory
+          - Run git init inside
+          - Create initial empty commit
+
+      - name: update_baseline
+        description: Update baseline with synced content
+        parameters:
+          - name: files
+            type: Dict[Path, str]
+            description: Mapping of relative_path to content
+        returns:
+          type: None
+        behavior:
+          - Write each file to baseline directory
+          - Stage all changes
+          - Commit with timestamp message
+
+      - name: get_baseline_content
+        description: Get baseline content for a file
+        parameters:
+          - name: relative_path
+            type: Path
+        returns:
+          type: Optional[str]
+          description: Content at last sync, or None if not tracked
+
+      - name: merge_file
+        description: Attempt 3-way merge using git merge-file
+        parameters:
+          - name: relative_path
+            type: Path
+          - name: local_content
+            type: str
+            description: Current local file content (OURS)
+          - name: remote_content
+            type: str
+            description: Current Confluence content (THEIRS)
+        returns:
+          type: MergeResult
+          description: Merged content and conflict status
+        behavior:
+          - Get baseline content (BASE)
+          - Write OURS, BASE, THEIRS to temp files
+          - Run git merge-file OURS BASE THEIRS
+          - Parse result for conflict markers
+          - Return MergeResult
+
+  ConflictResolver:
+    module: src/cli/conflict_resolver.py
+    description: Orchestrate conflict detection and resolution
+    constructor:
+      parameters:
+        - name: baseline_manager
+          type: BaselineManager
+        - name: output
+          type: OutputHandler
+    methods:
+      - name: resolve_conflicts
+        description: Attempt to auto-resolve conflicts via 3-way merge
+        parameters:
+          - name: conflicts
+            type: List[ConflictInfo]
+          - name: dryrun
+            type: bool
+            default: false
+        returns:
+          type: ConflictResolutionResult
+        behavior:
+          - For each conflict, attempt merge_file
+          - If no overlap, add to auto_merged
+          - If overlap, write markers to local file, add to manual_required
+          - If merge fails, add to merge_errors
+          - Return aggregated result
+
+---
+# Confluence REST API Calls
+
+confluence_api:
+  delete_page:
+    method: DELETE
+    path: /wiki/api/v2/pages/{page_id}
+    description: Move page to trash
+    parameters:
+      - name: page_id
+        in: path
+        required: true
+        schema:
+          type: string
+    responses:
+      204:
+        description: Page deleted (trashed)
+      403:
+        description: Permission denied
+      404:
+        description: Page not found
+
+  update_page_parent:
+    method: PUT
+    path: /wiki/api/v2/pages/{page_id}
+    description: Update page parent (move)
+    parameters:
+      - name: page_id
+        in: path
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [id, version, parentId]
+            properties:
+              id:
+                type: string
+              version:
+                type: object
+                required: [number]
+                properties:
+                  number:
+                    type: integer
+              parentId:
+                type: string
+                nullable: true
+    responses:
+      200:
+        description: Page updated
+      403:
+        description: Permission denied
+      404:
+        description: Page not found
+      409:
+        description: Version conflict
+
+  search_with_ancestors:
+    method: GET
+    path: /wiki/api/v2/search
+    description: CQL search with ancestors expansion
+    parameters:
+      - name: cql
+        in: query
+        required: true
+        schema:
+          type: string
+        example: 'type=page AND space="SPACE" AND ancestor=12345'
+      - name: expand
+        in: query
+        required: true
+        schema:
+          type: string
+          const: ancestors
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 500
+    responses:
+      200:
+        description: Search results with ancestors
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                results:
+                  type: array
+                  items:
+                    $ref: '../schemas/domain/conf-sync-005-extended-models.json#/definitions/PageAncestors'

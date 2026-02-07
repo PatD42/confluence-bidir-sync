@@ -1,0 +1,10 @@
+# Production dependencies for confluence-bidir-sync library
+atlassian-python-api==4.0.7
+beautifulsoup4==4.14.3
+lxml==5.3.0
+markdownify>=1.2.2  # For clean pipe table HTML→markdown conversion
+python-dotenv==1.0.0
+PyYAML==6.0.2
+requests>=2.32.4  # Security: CVE-2024-35195, CVE-2024-47081
+rich==13.7.0
+typer>=0.12.5,<0.20.0

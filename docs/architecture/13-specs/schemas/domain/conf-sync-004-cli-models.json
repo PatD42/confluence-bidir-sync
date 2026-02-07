@@ -1,0 +1,177 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "conf-sync-004-cli-models",
+  "title": "CLI Domain Models",
+  "description": "Data models for CLI & Sync Orchestration (Epic CONF-SYNC-004)",
+
+  "definitions": {
+    "ExitCode": {
+      "type": "integer",
+      "enum": [0, 1, 2, 3, 4],
+      "description": "CLI exit codes: 0=success, 1=error, 2=conflicts, 3=auth, 4=network"
+    },
+
+    "SyncState": {
+      "type": "object",
+      "description": "Project-level sync state stored in .confluence-sync/state.yaml",
+      "properties": {
+        "last_synced": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "ISO timestamp of last successful sync"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "SyncConfig": {
+      "type": "object",
+      "description": "Project configuration from .confluence-sync/config.yaml",
+      "required": ["version", "spaces"],
+      "properties": {
+        "version": {
+          "type": "integer",
+          "const": 1
+        },
+        "spaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SpaceConfig"
+          },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "SpaceConfig": {
+      "type": "object",
+      "description": "Configuration for a single Confluence space",
+      "required": ["space_key", "local_path"],
+      "properties": {
+        "space_key": {
+          "type": "string",
+          "pattern": "^[A-Z0-9]+$",
+          "description": "Confluence space key"
+        },
+        "parent_page_id": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9]+$",
+          "description": "Root page ID, null for space root"
+        },
+        "local_path": {
+          "type": "string",
+          "description": "Path to local directory"
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ExcludeRule"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ExcludeRule": {
+      "type": "object",
+      "description": "Exclusion rule for pages",
+      "required": ["page_id"],
+      "properties": {
+        "page_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ChangeDetectionResult": {
+      "type": "object",
+      "description": "Result of timestamp-based change detection",
+      "required": ["unchanged", "to_push", "to_pull", "conflicts", "new_local", "new_remote"],
+      "properties": {
+        "unchanged": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "page_ids with no changes"
+        },
+        "to_push": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "page_ids where mtime > last_synced"
+        },
+        "to_pull": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "page_ids where last_modified > last_synced"
+        },
+        "conflicts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "page_ids where both changed"
+        },
+        "new_local": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "file_paths without page_id"
+        },
+        "new_remote": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "page_ids without local file"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "SyncSummary": {
+      "type": "object",
+      "description": "Summary of sync operation for output",
+      "required": ["pushed", "pulled", "conflicts_resolved", "skipped", "failed"],
+      "properties": {
+        "pushed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pulled": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "conflicts_resolved": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "errors": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "Frontmatter": {
+      "type": "object",
+      "description": "Minimal frontmatter in markdown files",
+      "required": ["page_id"],
+      "properties": {
+        "page_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Confluence page ID"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

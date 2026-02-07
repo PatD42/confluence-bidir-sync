@@ -1,0 +1,89 @@
+# Confluence Bidirectional Sync Configuration
+# This file defines which Confluence spaces to sync with local markdown files.
+#
+# Configuration follows ADR-012: parent pageID serves as the anchor point
+# for each space hierarchy rather than using local file paths.
+
+# List of spaces to sync (REQUIRED)
+# Each space configuration defines a Confluence space and where to sync it locally
+spaces:
+  # Example 1: Team space with a parent page anchor
+  - space_key: "TEAM"                    # Confluence space key (REQUIRED)
+    parent_page_id: "123456"             # Page ID to use as root of hierarchy (REQUIRED, ADR-012)
+    local_path: "./team-space"           # Local directory for synced files (REQUIRED)
+    exclude_page_ids:                    # Optional: List of page IDs to exclude from sync (ADR-015)
+      - "789012"                         # Archives page (and all descendants won't be synced)
+      - "345678"                         # Old Documentation page
+
+  # Example 2: Product documentation space without exclusions
+  - space_key: "PROD"
+    parent_page_id: "654321"
+    local_path: "./product-docs"
+    # exclude_page_ids: []               # Optional: Can be empty or omitted if no exclusions
+
+  # Example 3: Engineering wiki space
+  - space_key: "ENG"
+    parent_page_id: "111222"
+    local_path: "./engineering"
+
+# Global sync options (all optional with defaults shown)
+
+# Maximum number of pages allowed per hierarchy level (ADR-013)
+# If a parent page has more children than this limit, sync will fail with PageLimitExceededError
+# Default: 100 (MVP limitation)
+page_limit: 100
+
+# Force sync from Confluence to local even if local has changes (ADR-014)
+# WARNING: This will overwrite local changes without warning!
+# Default: false
+force_pull: false
+
+# Force sync from local to Confluence even if remote has changes (ADR-014)
+# WARNING: This will overwrite Confluence changes without warning!
+# Default: false
+force_push: false
+
+# IMPORTANT: force_pull and force_push are mutually exclusive
+# Setting both to true will result in a ConfigError
+
+# Temporary directory for atomic file operations (ADR-011)
+# Uses two-phase commit pattern to ensure all-or-nothing writes
+# Default: ".confluence-sync/temp"
+temp_dir: ".confluence-sync/temp"
+
+# Notes on configuration:
+#
+# 1. Initial Sync Direction (ADR-014):
+#    - If local directory is empty: syncs from Confluence (pull)
+#    - If Confluence parent has no children: syncs to Confluence (push)
+#    - If both have content: fails unless force_pull or force_push is set
+#
+# 2. Filesafe Conversion (ADR-010):
+#    - Page titles are converted to valid filenames with case preservation
+#    - Examples:
+#      * "Customer Feedback" → "Customer-Feedback.md"
+#      * "API Reference: Getting Started" → "API-Reference--Getting-Started.md"
+#      * "Q&A Session" → "Q-A-Session.md"
+#
+# 3. Hierarchical Folder Structure:
+#    - Parent page "Foo" with child "Bar" creates:
+#      * Foo.md (parent page content)
+#      * Foo/Bar.md (child page content)
+#
+# 4. YAML Frontmatter (ADR-009):
+#    - All markdown files include frontmatter with:
+#      * page_id: Confluence page identifier
+#      * space_key: Space where page resides
+#      * title: Page title
+#      * last_synced: ISO 8601 timestamp of last sync
+#      * confluence_version: Page version number at last sync
+#
+# 5. Exclusion by PageID (ADR-015):
+#    - Excluded pages and all their descendants won't be synced
+#    - Use exclude_page_ids list in space configuration
+#    - MVP supports pageID exclusion only (no regex patterns)
+#
+# 6. Page Limit Enforcement (ADR-013):
+#    - Maximum 100 pages per hierarchy level in MVP
+#    - Exceeding limit raises PageLimitExceededError
+#    - Future epic will add pagination support

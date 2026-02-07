@@ -1,0 +1,308 @@
+# Error Codes: CONF-SYNC-003 - Git Integration
+# Domain: git_integration
+# Error Code Range: GIT-001 to GIT-099
+
+errors:
+  # Git Repository Errors (GIT-001 to GIT-019)
+  - code: GIT-001
+    name: GitRepositoryInitFailed
+    exception: GitRepositoryError
+    message: "Failed to initialize git repository at {repo_path}"
+    severity: error
+    http_status: 500
+    context:
+      - repo_path: string
+      - git_output: string
+    recovery: "Delete the directory and retry, or check git installation"
+    examples:
+      - scenario: Git not installed
+        context:
+          repo_path: ".confluence-sync/MYSPACE_md"
+          git_output: "git: command not found"
+        message: "Failed to initialize git repository at .confluence-sync/MYSPACE_md"
+
+  - code: GIT-002
+    name: GitRepositoryCorrupted
+    exception: GitRepositoryError
+    message: "Git repository at {repo_path} is corrupted"
+    severity: error
+    http_status: 500
+    context:
+      - repo_path: string
+      - git_output: string
+    recovery: "Delete the directory and reinitialize (WARNING: historical versions will be lost)"
+    examples:
+      - scenario: git fsck detects corruption
+        context:
+          repo_path: ".confluence-sync/MYSPACE_md"
+          git_output: "error: object file is empty"
+
+  - code: GIT-003
+    name: GitCommitFailed
+    exception: GitRepositoryError
+    message: "Failed to commit version {version} for page {page_id}"
+    severity: error
+    http_status: 500
+    context:
+      - repo_path: string
+      - page_id: string
+      - version: integer
+      - git_output: string
+    recovery: "Check git repository state and retry"
+    examples:
+      - scenario: Git add/commit fails
+        context:
+          repo_path: ".confluence-sync/MYSPACE_md"
+          page_id: "123456"
+          version: 15
+          git_output: "fatal: pathspec did not match any files"
+
+  - code: GIT-004
+    name: GitVersionNotFound
+    exception: GitRepositoryError
+    message: "Base version {version} not found in git history for page {page_id}"
+    severity: warning
+    http_status: 404
+    context:
+      - repo_path: string
+      - page_id: string
+      - version: integer
+    recovery: "Will fall back to two-way merge (no base version)"
+    examples:
+      - scenario: Base version missing from git history
+        context:
+          repo_path: ".confluence-sync/MYSPACE_md"
+          page_id: "123456"
+          version: 15
+
+  - code: GIT-005
+    name: GitMergeCommandFailed
+    exception: GitRepositoryError
+    message: "Git merge-file command failed"
+    severity: error
+    http_status: 500
+    context:
+      - git_output: string
+      - exit_code: integer
+    recovery: "Manual conflict resolution required"
+    examples:
+      - scenario: git merge-file exits with error
+        context:
+          git_output: "fatal: cannot read base file"
+          exit_code: 128
+
+  # Merge Conflict Errors (GIT-020 to GIT-039)
+  - code: GIT-020
+    name: UnresolvedConflicts
+    exception: MergeConflictError
+    message: "Unresolved merge conflicts for {count} pages: {page_ids}"
+    severity: error
+    http_status: 409
+    context:
+      - count: integer
+      - page_ids: array[string]
+      - conflict_files: array[string]
+    recovery: "Resolve conflicts in .conflict files and run: confluence-sync --continue"
+    examples:
+      - scenario: User did not resolve all conflicts
+        context:
+          count: 2
+          page_ids: ["123456", "789012"]
+          conflict_files: ["docs/page1.md.conflict", "docs/page2.md.conflict"]
+
+  - code: GIT-021
+    name: ConflictDetectionFailed
+    exception: MergeConflictError
+    message: "Failed to detect conflicts for page {page_id}"
+    severity: error
+    http_status: 500
+    context:
+      - page_id: string
+      - error: string
+    recovery: "Check network connectivity and Confluence API access"
+    examples:
+      - scenario: API call fails during conflict detection
+        context:
+          page_id: "123456"
+          error: "APIUnreachableError: API is not available"
+
+  # Merge Tool Errors (GIT-040 to GIT-059)
+  - code: GIT-040
+    name: MergeToolNotFound
+    exception: MergeToolError
+    message: "Merge tool '{tool_name}' not found in PATH"
+    severity: error
+    http_status: 500
+    context:
+      - tool_name: string
+      - configured_command: string
+    recovery: "Install {tool_name} or configure a different merge tool in .confluence-sync/config.yaml"
+    examples:
+      - scenario: VS Code not installed
+        context:
+          tool_name: "vscode"
+          configured_command: "code --wait --diff"
+
+  - code: GIT-041
+    name: MergeToolLaunchFailed
+    exception: MergeToolError
+    message: "Failed to launch merge tool '{tool_name}'"
+    severity: error
+    http_status: 500
+    context:
+      - tool_name: string
+      - error: string
+    recovery: "Check tool installation and PATH configuration"
+    examples:
+      - scenario: Tool exists but fails to launch
+        context:
+          tool_name: "vscode"
+          error: "Permission denied"
+
+  - code: GIT-042
+    name: MergeToolTimeout
+    exception: MergeToolError
+    message: "Merge tool '{tool_name}' timed out after {timeout_minutes} minutes"
+    severity: error
+    http_status: 500
+    context:
+      - tool_name: string
+      - timeout_minutes: integer
+    recovery: "Resolve conflicts manually and run: confluence-sync --continue"
+    examples:
+      - scenario: User left merge tool open too long
+        context:
+          tool_name: "vscode"
+          timeout_minutes: 30
+
+  - code: GIT-043
+    name: MergeToolExitError
+    exception: MergeToolError
+    message: "Merge tool '{tool_name}' exited with error code {exit_code}"
+    severity: error
+    http_status: 500
+    context:
+      - tool_name: string
+      - exit_code: integer
+      - stderr: string
+    recovery: "Check tool output and resolve conflicts manually"
+    examples:
+      - scenario: Tool crashes
+        context:
+          tool_name: "meld"
+          exit_code: 1
+          stderr: "Segmentation fault"
+
+  # Cache Errors (GIT-060 to GIT-079)
+  - code: GIT-060
+    name: CacheReadFailed
+    exception: CacheError
+    message: "Failed to read cache file at {cache_path}"
+    severity: warning
+    http_status: 500
+    context:
+      - cache_path: string
+      - error: string
+    recovery: "Cache miss, will re-fetch from Confluence"
+    examples:
+      - scenario: Cache file corrupted
+        context:
+          cache_path: ".confluence-sync/MYSPACE_xhtml/123456_v15.xhtml"
+          error: "Invalid JSON in metadata file"
+
+  - code: GIT-061
+    name: CacheWriteFailed
+    exception: CacheError
+    message: "Failed to write cache file at {cache_path}"
+    severity: warning
+    http_status: 500
+    context:
+      - cache_path: string
+      - error: string
+    recovery: "Cache disabled for this page, will re-fetch on next sync"
+    examples:
+      - scenario: Disk full
+        context:
+          cache_path: ".confluence-sync/MYSPACE_xhtml/123456_v16.xhtml"
+          error: "No space left on device"
+
+  - code: GIT-062
+    name: CacheCorrupted
+    exception: CacheError
+    message: "Cache metadata corrupted for page {page_id}"
+    severity: warning
+    http_status: 500
+    context:
+      - page_id: string
+      - cache_path: string
+      - error: string
+    recovery: "Cache invalidated, will re-fetch from Confluence"
+    examples:
+      - scenario: Metadata JSON parse error
+        context:
+          page_id: "123456"
+          cache_path: ".confluence-sync/MYSPACE_xhtml/123456_v15.meta.json"
+          error: "Expecting property name enclosed in double quotes"
+
+  # Configuration Errors (GIT-080 to GIT-099)
+  - code: GIT-080
+    name: InvalidGitConfig
+    exception: GitRepositoryError
+    message: "Invalid git configuration: {error}"
+    severity: error
+    http_status: 400
+    context:
+      - error: string
+      - config_path: string
+    recovery: "Fix configuration in {config_path}"
+    examples:
+      - scenario: Missing required field
+        context:
+          error: "Missing 'markdown_repo' field in git config"
+          config_path: ".confluence-sync/config.yaml"
+
+  - code: GIT-081
+    name: InvalidMergeConfig
+    exception: MergeToolError
+    message: "Invalid merge configuration: {error}"
+    severity: error
+    http_status: 400
+    context:
+      - error: string
+      - config_path: string
+    recovery: "Fix configuration in {config_path}"
+    examples:
+      - scenario: Unknown merge tool
+        context:
+          error: "Unknown merge tool: 'invalid-tool'"
+          config_path: ".confluence-sync/config.yaml"
+
+  - code: GIT-082
+    name: FrontmatterMissing
+    exception: GitRepositoryError
+    message: "File {file_path} missing frontmatter with confluence_version"
+    severity: error
+    http_status: 400
+    context:
+      - file_path: string
+    recovery: "Add YAML frontmatter with 'confluence_version' field"
+    examples:
+      - scenario: Local file has no frontmatter
+        context:
+          file_path: "docs/page.md"
+
+  - code: GIT-083
+    name: FrontmatterInvalid
+    exception: GitRepositoryError
+    message: "Invalid frontmatter in file {file_path}: {error}"
+    severity: error
+    http_status: 400
+    context:
+      - file_path: string
+      - error: string
+    recovery: "Fix YAML frontmatter syntax"
+    examples:
+      - scenario: YAML syntax error
+        context:
+          file_path: "docs/page.md"
+          error: "expected <block end>, but found '-'"

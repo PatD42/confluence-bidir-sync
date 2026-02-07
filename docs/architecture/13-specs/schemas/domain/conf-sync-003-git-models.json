@@ -1,0 +1,326 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://confluence-bidir-sync/schemas/conf-sync-003-git-models.json",
+  "title": "Git Integration Domain Models",
+  "description": "Data models for git-based conflict resolution (CONF-SYNC-003)",
+  "definitions": {
+    "MergeStrategy": {
+      "type": "string",
+      "enum": ["three_way", "force_push", "force_pull"],
+      "description": "Strategy for sync operation",
+      "examples": ["three_way"]
+    },
+    "LocalPage": {
+      "type": "object",
+      "description": "Represents a local markdown file in sync scope",
+      "required": ["page_id", "file_path", "local_version", "title"],
+      "properties": {
+        "page_id": {
+          "type": "string",
+          "description": "Confluence page ID from frontmatter",
+          "pattern": "^[0-9]+$",
+          "examples": ["123456"]
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Absolute path to local .md file",
+          "examples": ["/path/to/docs/page.md"]
+        },
+        "local_version": {
+          "type": "integer",
+          "description": "Version from frontmatter",
+          "minimum": 1,
+          "examples": [15]
+        },
+        "title": {
+          "type": "string",
+          "description": "Page title for display",
+          "minLength": 1,
+          "examples": ["Getting Started"]
+        }
+      }
+    },
+    "ConflictInfo": {
+      "type": "object",
+      "description": "Information about a detected conflict",
+      "required": ["page_id", "file_path", "local_version", "remote_version", "has_base"],
+      "properties": {
+        "page_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "examples": ["123456"]
+        },
+        "file_path": {
+          "type": "string",
+          "examples": ["/path/to/docs/page.md"]
+        },
+        "local_version": {
+          "type": "integer",
+          "minimum": 1,
+          "examples": [15]
+        },
+        "remote_version": {
+          "type": "integer",
+          "minimum": 1,
+          "examples": [17]
+        },
+        "has_base": {
+          "type": "boolean",
+          "description": "Whether base version found in git history",
+          "examples": [true]
+        }
+      }
+    },
+    "ConflictDetectionResult": {
+      "type": "object",
+      "description": "Result of batch conflict detection",
+      "required": ["conflicts", "auto_mergeable", "errors"],
+      "properties": {
+        "conflicts": {
+          "type": "array",
+          "description": "Pages with conflicts requiring resolution",
+          "items": {
+            "$ref": "#/definitions/ConflictInfo"
+          }
+        },
+        "auto_mergeable": {
+          "type": "array",
+          "description": "Pages that can auto-merge (no conflicts)",
+          "items": {
+            "$ref": "#/definitions/LocalPage"
+          }
+        },
+        "errors": {
+          "type": "array",
+          "description": "Pages that failed conflict detection",
+          "items": {
+            "type": "object",
+            "required": ["page_id", "error_message"],
+            "properties": {
+              "page_id": {
+                "type": "string",
+                "pattern": "^[0-9]+$"
+              },
+              "error_message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "ThreeWayMergeInputs": {
+      "type": "object",
+      "description": "Inputs for three-way git merge",
+      "required": ["page_id", "base_markdown", "local_markdown", "remote_markdown", "local_version", "remote_version"],
+      "properties": {
+        "page_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "base_markdown": {
+          "type": "string",
+          "description": "Base version markdown (from git history)"
+        },
+        "local_markdown": {
+          "type": "string",
+          "description": "Local file markdown"
+        },
+        "remote_markdown": {
+          "type": "string",
+          "description": "Confluence current version markdown"
+        },
+        "local_version": {
+          "type": "integer",
+          "description": "Version number for base/local",
+          "minimum": 1
+        },
+        "remote_version": {
+          "type": "integer",
+          "description": "Version number for remote",
+          "minimum": 1
+        }
+      }
+    },
+    "MergeResult": {
+      "type": "object",
+      "description": "Result of git merge operation",
+      "required": ["success", "merged_markdown", "git_output"],
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "Whether merge succeeded without conflicts"
+        },
+        "merged_markdown": {
+          "type": "string",
+          "description": "Merged content (if success or after resolution)"
+        },
+        "conflict_file": {
+          "type": ["string", "null"],
+          "description": "Path to .conflict file (if conflicts)"
+        },
+        "git_output": {
+          "type": "string",
+          "description": "Git merge command output"
+        }
+      }
+    },
+    "MergeToolResult": {
+      "type": "object",
+      "description": "Result of merge tool execution",
+      "required": ["success", "resolved_content"],
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "Whether tool exited successfully"
+        },
+        "resolved_content": {
+          "type": "string",
+          "description": "Merged content from tool"
+        },
+        "error": {
+          "type": ["string", "null"],
+          "description": "Error message if tool failed"
+        }
+      }
+    },
+    "SyncResult": {
+      "type": "object",
+      "description": "Overall result of sync operation",
+      "required": ["success", "pages_synced", "pages_failed", "conflicts_resolved", "errors"],
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "Whether entire sync succeeded"
+        },
+        "pages_synced": {
+          "type": "integer",
+          "description": "Number of pages successfully synced",
+          "minimum": 0
+        },
+        "pages_failed": {
+          "type": "integer",
+          "description": "Number of pages that failed",
+          "minimum": 0
+        },
+        "conflicts_resolved": {
+          "type": "integer",
+          "description": "Number of conflicts resolved",
+          "minimum": 0
+        },
+        "errors": {
+          "type": "object",
+          "description": "Error messages by page_id",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "CachedPage": {
+      "type": "object",
+      "description": "Cached XHTML metadata",
+      "required": ["page_id", "version", "xhtml", "last_modified", "cached_at"],
+      "properties": {
+        "page_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "xhtml": {
+          "type": "string",
+          "description": "XHTML content"
+        },
+        "last_modified": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Confluence last_modified timestamp"
+        },
+        "cached_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When this entry was cached"
+        }
+      }
+    },
+    "GitConfig": {
+      "type": "object",
+      "description": "Git integration configuration",
+      "required": ["enable", "markdown_repo", "cache_dir"],
+      "properties": {
+        "enable": {
+          "type": "boolean",
+          "description": "Enable git integration",
+          "default": true
+        },
+        "markdown_repo": {
+          "type": "string",
+          "description": "Path to git repo for markdown mirror",
+          "examples": [".confluence-sync/MYSPACE_md"]
+        },
+        "cache_dir": {
+          "type": "string",
+          "description": "Path to XHTML cache directory",
+          "examples": [".confluence-sync/MYSPACE_xhtml"]
+        },
+        "auto_init": {
+          "type": "boolean",
+          "description": "Auto-initialize git repo if missing",
+          "default": true
+        }
+      }
+    },
+    "MergeConfig": {
+      "type": "object",
+      "description": "Merge tool configuration",
+      "required": ["tool"],
+      "properties": {
+        "tool": {
+          "type": "string",
+          "enum": ["vscode", "vim", "meld", "kdiff3", "custom"],
+          "description": "Merge tool name",
+          "default": "vscode"
+        },
+        "custom_command": {
+          "type": ["string", "null"],
+          "description": "Custom command template with {LOCAL}, {BASE}, {REMOTE}, {OUTPUT}",
+          "examples": ["/usr/local/bin/meld {LOCAL} {BASE} {REMOTE} --output {OUTPUT}"]
+        },
+        "timeout_minutes": {
+          "type": "integer",
+          "description": "Max time to wait for merge tool",
+          "minimum": 1,
+          "maximum": 120,
+          "default": 30
+        }
+      }
+    },
+    "CacheConfig": {
+      "type": "object",
+      "description": "Cache configuration",
+      "required": ["enable"],
+      "properties": {
+        "enable": {
+          "type": "boolean",
+          "description": "Enable XHTML caching",
+          "default": true
+        },
+        "max_age_days": {
+          "type": "integer",
+          "description": "Re-fetch if older than N days",
+          "minimum": 1,
+          "maximum": 365,
+          "default": 7
+        },
+        "auto_cleanup": {
+          "type": "boolean",
+          "description": "Delete old cache entries on startup",
+          "default": true
+        }
+      }
+    }
+  }
+}

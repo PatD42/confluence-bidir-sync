@@ -1,0 +1,69 @@
+# Error Taxonomy for confluence-bidir-sync
+# Defines error domains and code ranges
+
+domains:
+  - domain: confluence_client
+    description: Confluence API integration errors
+    code_prefix: API
+    code_range: "001-099"
+    module: src/confluence_client/errors.py
+    epics:
+      - CONF-SYNC-001
+
+  - domain: content_converter
+    description: Format conversion errors (XHTML ↔ Markdown)
+    code_prefix: CONV
+    code_range: "001-099"
+    module: src/content_converter/
+    epics:
+      - CONF-SYNC-001
+
+  - domain: page_operations
+    description: Surgical update and page operation errors
+    code_prefix: PAGE
+    code_range: "001-099"
+    module: src/page_operations/
+    epics:
+      - CONF-SYNC-001
+
+  - domain: git_integration
+    description: Git-based conflict resolution errors
+    code_prefix: GIT
+    code_range: "001-099"
+    module: src/git_integration/errors.py
+    epics:
+      - CONF-SYNC-003
+    error_file: 13-specs/errors/by-domain/conf-sync-003-git-integration.yaml
+
+  - domain: file_mapper
+    description: Local file structure and mapping errors
+    code_prefix: FILE
+    code_range: "001-099"
+    module: src/file_mapper/
+    epics:
+      - CONF-SYNC-002
+
+  - domain: cli
+    description: CLI command and orchestration errors
+    code_prefix: CLI
+    code_range: "001-099"
+    module: src/cli/errors.py
+    epics:
+      - CONF-SYNC-004
+    error_file: 13-specs/errors/by-domain/conf-sync-004-cli.yaml
+
+severity_levels:
+  - debug: Diagnostic information
+  - info: Informational messages
+  - warning: Recoverable issues
+  - error: Operation failures requiring user action
+  - critical: System failures requiring immediate attention
+
+http_status_mapping:
+  400: Bad Request (user input error)
+  401: Unauthorized (invalid credentials)
+  404: Not Found (resource doesn't exist)
+  409: Conflict (version mismatch, merge conflicts)
+  429: Too Many Requests (rate limit exceeded)
+  500: Internal Server Error (unexpected failures)
+  503: Service Unavailable (API unreachable)

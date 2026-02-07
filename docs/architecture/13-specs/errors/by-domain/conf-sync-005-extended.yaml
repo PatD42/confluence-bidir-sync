@@ -1,0 +1,240 @@
+# Error Codes for Extended Features (Deletion & Moves)
+# Epic: CONF-SYNC-005
+# Code prefix: EXT
+# Code range: 001-099
+
+domain: extended_features
+module: src/cli/errors.py
+
+errors:
+  # Deletion errors (001-029)
+  - code: EXT-001
+    name: DeletePermissionDeniedError
+    severity: error
+    exit_code: 1
+    message: "Cannot delete page"
+    description: "Insufficient permissions to delete Confluence page"
+    user_action: "Check Confluence permissions for this page"
+    fields:
+      - name: page_id
+        type: string
+      - name: page_title
+        type: string
+
+  - code: EXT-002
+    name: DeletePageNotFoundError
+    severity: warning
+    exit_code: 0
+    message: "Page already deleted"
+    description: "Page no longer exists in Confluence (already deleted or trashed)"
+    user_action: "No action needed - deletion already applied"
+    fields:
+      - name: page_id
+        type: string
+
+  - code: EXT-003
+    name: DeleteFileNotFoundError
+    severity: warning
+    exit_code: 0
+    message: "Local file already deleted"
+    description: "Local file no longer exists (already removed)"
+    user_action: "No action needed - file already removed"
+    fields:
+      - name: local_path
+        type: string
+
+  - code: EXT-004
+    name: DeleteHasChildrenError
+    severity: warning
+    exit_code: 1
+    message: "Page has children"
+    description: "Confluence page has child pages that would be orphaned"
+    user_action: "Delete or move child pages first, or use --force"
+    fields:
+      - name: page_id
+        type: string
+      - name: child_count
+        type: integer
+
+  # Move errors (030-059)
+  - code: EXT-030
+    name: MoveTargetExistsError
+    severity: error
+    exit_code: 1
+    message: "Move conflict"
+    description: "Target path already exists with different content"
+    user_action: "Resolve conflict manually - rename or remove target file"
+    fields:
+      - name: source_path
+        type: string
+      - name: target_path
+        type: string
+
+  - code: EXT-031
+    name: MoveParentNotFoundError
+    severity: error
+    exit_code: 1
+    message: "Parent page not found"
+    description: "Target folder has no corresponding Confluence page"
+    user_action: "Create parent page first, or move to valid location"
+    fields:
+      - name: target_folder
+        type: string
+
+  - code: EXT-032
+    name: MoveAPIError
+    severity: error
+    exit_code: 1
+    message: "Failed to move page"
+    description: "Confluence API error when updating page parent"
+    user_action: "Check API error details and retry"
+    fields:
+      - name: page_id
+        type: string
+      - name: api_error
+        type: string
+
+  - code: EXT-033
+    name: MovePermissionDeniedError
+    severity: error
+    exit_code: 1
+    message: "Cannot move page"
+    description: "Insufficient permissions to update page parent"
+    user_action: "Check Confluence permissions for both source and target locations"
+    fields:
+      - name: page_id
+        type: string
+      - name: target_parent_id
+        type: string
+
+  # Validation errors (060-079)
+  - code: EXT-060
+    name: InvalidFrontmatterYAMLError
+    severity: error
+    exit_code: 1
+    message: "Invalid frontmatter YAML"
+    description: "Frontmatter contains malformed YAML syntax"
+    user_action: "Fix YAML syntax in frontmatter"
+    fields:
+      - name: file_path
+        type: string
+      - name: parse_error
+        type: string
+
+  - code: EXT-061
+    name: InvalidPageIDFormatError
+    severity: error
+    exit_code: 1
+    message: "Invalid page_id format"
+    description: "page_id must be a numeric string"
+    user_action: "Update page_id to valid numeric format"
+    fields:
+      - name: file_path
+        type: string
+      - name: page_id_value
+        type: string
+
+  # Ancestor/CQL errors (080-089)
+  - code: EXT-080
+    name: AncestorQueryTimeoutError
+    severity: error
+    exit_code: 4
+    message: "Ancestor query timeout"
+    description: "CQL query with ancestors expansion timed out"
+    user_action: "Reduce scope or retry with smaller page set"
+    fields:
+      - name: cql_query
+        type: string
+
+  - code: EXT-081
+    name: AncestorParseError
+    severity: warning
+    exit_code: 1
+    message: "Failed to parse ancestors"
+    description: "Unexpected ancestor response format from API"
+    user_action: "Check Confluence API compatibility"
+    fields:
+      - name: page_id
+        type: string
+
+  # Merge/Conflict errors (090-099)
+  - code: EXT-090
+    name: MergeConflictError
+    severity: warning
+    exit_code: 2
+    message: "Merge conflict requires manual resolution"
+    description: "3-way merge detected overlapping changes that cannot be auto-resolved"
+    user_action: "Edit the file to resolve conflict markers, then re-sync"
+    fields:
+      - name: file_path
+        type: string
+      - name: conflict_count
+        type: integer
+
+  - code: EXT-091
+    name: BaselineNotFoundError
+    severity: warning
+    exit_code: 1
+    message: "No baseline for merge"
+    description: "Cannot perform 3-way merge - no baseline content available"
+    user_action: "Run sync with --forcePull or --forcePush to establish baseline"
+    fields:
+      - name: file_path
+        type: string
+
+  - code: EXT-092
+    name: BaselineRepoInitError
+    severity: error
+    exit_code: 1
+    message: "Failed to initialize baseline repository"
+    description: "Could not create hidden git repo at .confluence-sync/baseline/"
+    user_action: "Check write permissions and disk space"
+    fields:
+      - name: baseline_path
+        type: string
+      - name: error_detail
+        type: string
+
+  - code: EXT-093
+    name: GitMergeFileError
+    severity: error
+    exit_code: 1
+    message: "git merge-file failed"
+    description: "External git merge-file command failed unexpectedly"
+    user_action: "Ensure git is installed and accessible"
+    fields:
+      - name: file_path
+        type: string
+      - name: exit_code
+        type: integer
+
+# Exit code mapping (extends CLI exit codes)
+exit_codes:
+  1:
+    name: GENERAL_ERROR
+    description: "General error (deletion, move, merge setup)"
+    error_codes:
+      - EXT-001
+      - EXT-004
+      - EXT-030
+      - EXT-031
+      - EXT-032
+      - EXT-033
+      - EXT-060
+      - EXT-061
+      - EXT-081
+      - EXT-091
+      - EXT-092
+      - EXT-093
+
+  2:
+    name: CONFLICTS
+    description: "Merge conflicts requiring manual resolution"
+    error_codes:
+      - EXT-090
+
+  4:
+    name: NETWORK_ERROR
+    description: "Network error or timeout"
+    error_codes:
+      - EXT-080

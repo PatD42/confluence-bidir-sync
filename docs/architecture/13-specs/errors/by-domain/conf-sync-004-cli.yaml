@@ -1,0 +1,142 @@
+# Error Codes for CLI & Sync Orchestration
+# Epic: CONF-SYNC-004
+# Code prefix: CLI
+# Code range: 001-099
+
+domain: cli
+module: src/cli/errors.py
+
+errors:
+  # Configuration errors (001-019)
+  - code: CLI-001
+    name: ConfigNotFoundError
+    severity: error
+    exit_code: 1
+    message: "No configuration found"
+    description: ".confluence-sync/config.yaml does not exist"
+    user_action: "Run 'confluence-sync --init' first"
+
+  - code: CLI-002
+    name: ConfigInvalidError
+    severity: error
+    exit_code: 1
+    message: "Invalid configuration"
+    description: "Config file has invalid YAML or missing required fields"
+    user_action: "Check .confluence-sync/config.yaml for errors"
+    fields:
+      - name: config_path
+        type: string
+      - name: detail
+        type: string
+
+  - code: CLI-003
+    name: ConfigExistsError
+    severity: error
+    exit_code: 1
+    message: "Configuration already exists"
+    description: "Cannot initialize - config file already present"
+    user_action: "Delete .confluence-sync/config.yaml to reinitialize"
+
+  # Validation errors (020-039)
+  - code: CLI-020
+    name: PandocNotFoundError
+    severity: error
+    exit_code: 1
+    message: "Pandoc not found"
+    description: "Pandoc CLI not in PATH"
+    user_action: "Install with: brew install pandoc"
+
+  - code: CLI-021
+    name: InvalidPathError
+    severity: error
+    exit_code: 1
+    message: "Invalid path"
+    description: "Specified path does not exist or is not accessible"
+    user_action: "Check the path exists and has correct permissions"
+    fields:
+      - name: path
+        type: string
+
+  - code: CLI-022
+    name: PageNotInScopeError
+    severity: error
+    exit_code: 1
+    message: "Page not in sync scope"
+    description: "Specified file is not in configured sync scope"
+    user_action: "Check config or specify a file within local_path"
+    fields:
+      - name: file_path
+        type: string
+
+  # Sync operation errors (040-059)
+  - code: CLI-040
+    name: SyncAbortedError
+    severity: warning
+    exit_code: 2
+    message: "Sync aborted"
+    description: "Sync stopped due to unresolved conflicts"
+    user_action: "Resolve conflicts and re-run sync"
+    fields:
+      - name: conflict_count
+        type: integer
+
+  - code: CLI-041
+    name: PartialSyncError
+    severity: warning
+    exit_code: 1
+    message: "Partial sync completed"
+    description: "Some pages failed to sync"
+    user_action: "Check error messages and retry"
+    fields:
+      - name: succeeded
+        type: integer
+      - name: failed
+        type: integer
+      - name: errors
+        type: array
+
+  # State errors (060-069)
+  - code: CLI-060
+    name: StateCorruptedError
+    severity: error
+    exit_code: 1
+    message: "State file corrupted"
+    description: ".confluence-sync/state.yaml has invalid format"
+    user_action: "Delete state.yaml - will resync all pages"
+
+# Exit code mapping
+exit_codes:
+  0:
+    name: SUCCESS
+    description: "Sync completed successfully"
+
+  1:
+    name: GENERAL_ERROR
+    description: "General error (config, validation, partial failure)"
+    error_codes:
+      - CLI-001
+      - CLI-002
+      - CLI-003
+      - CLI-020
+      - CLI-021
+      - CLI-022
+      - CLI-041
+      - CLI-060
+
+  2:
+    name: CONFLICTS
+    description: "Unresolved merge conflicts"
+    error_codes:
+      - CLI-040
+
+  3:
+    name: AUTH_FAILURE
+    description: "Authentication failed"
+    mapped_from: API-001  # InvalidCredentialsError from confluence_client
+
+  4:
+    name: NETWORK_ERROR
+    description: "Network error or rate limit"
+    mapped_from:
+      - API-002  # APIUnreachableError
+      - API-003  # APIAccessError (rate limit exhausted)

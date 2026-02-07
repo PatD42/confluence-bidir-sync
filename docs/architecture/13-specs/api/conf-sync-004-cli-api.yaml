@@ -1,0 +1,298 @@
+openapi: 3.0.3
+
+info:
+  title: CLI Internal API
+  description: |
+    Internal Python module API specification for CLI & Sync Orchestration.
+
+    This is NOT a REST API - it documents Python module interfaces
+    for Auto Claude implementation guidance.
+
+    **Epic**: CONF-SYNC-004 - CLI & Sync Orchestration
+  version: 1.0.0
+
+paths:
+  # Entry point
+  /cli/main/sync:
+    post:
+      summary: Execute sync command
+      description: Main entry point for confluence-sync command
+      operationId: cli_sync
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  nullable: true
+                  description: Optional single file to sync
+                force_push:
+                  type: boolean
+                  default: false
+                force_pull:
+                  type: boolean
+                  default: false
+                dryrun:
+                  type: boolean
+                  default: false
+                verbose:
+                  type: integer
+                  minimum: 0
+                  maximum: 2
+                  default: 0
+                no_color:
+                  type: boolean
+                  default: false
+      responses:
+        '0':
+          description: Success
+        '1':
+          description: General error
+        '2':
+          description: Unresolved conflicts
+        '3':
+          description: Authentication failure
+        '4':
+          description: Network error
+
+  /cli/main/init:
+    post:
+      summary: Initialize configuration
+      description: Create .confluence-sync/config.yaml
+      operationId: cli_init
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [space_path, local_path]
+              properties:
+                space_path:
+                  type: string
+                  description: "SPACE:path or SPACE:pageID or SPACE:/"
+                  examples:
+                    - "CONFSYNCTEST:/product/"
+                    - "CONFSYNCTEST:12345"
+                    - "CONFSYNCTEST:/"
+                local_path:
+                  type: string
+                  description: Local directory path
+      responses:
+        '0':
+          description: Config created
+        '1':
+          description: Error (config exists, page not found)
+
+  # SyncCommand
+  /cli/sync_command/execute:
+    post:
+      summary: Execute sync workflow
+      operationId: sync_command_execute
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SyncOptions'
+      responses:
+        '200':
+          description: Sync completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncSummary'
+
+  # ChangeDetector
+  /cli/change_detector/detect:
+    post:
+      summary: Detect changes using timestamps
+      operationId: change_detector_detect
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [local_pages, remote_pages, last_synced]
+              properties:
+                local_pages:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/LocalPageInfo'
+                remote_pages:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/RemotePageInfo'
+                last_synced:
+                  type: string
+                  format: date-time
+                  nullable: true
+      responses:
+        '200':
+          description: Detection complete
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangeDetectionResult'
+
+  # StateManager
+  /cli/state_manager/load:
+    get:
+      summary: Load sync state
+      operationId: state_manager_load
+      responses:
+        '200':
+          description: State loaded (or default if missing)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncState'
+
+  /cli/state_manager/save:
+    post:
+      summary: Save sync state
+      operationId: state_manager_save
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SyncState'
+      responses:
+        '200':
+          description: State saved
+
+  /cli/state_manager/update_last_synced:
+    post:
+      summary: Update last_synced to now
+      operationId: state_manager_update_last_synced
+      responses:
+        '200':
+          description: Updated
+
+components:
+  schemas:
+    SyncOptions:
+      type: object
+      properties:
+        file:
+          type: string
+          nullable: true
+        force_push:
+          type: boolean
+          default: false
+        force_pull:
+          type: boolean
+          default: false
+        dryrun:
+          type: boolean
+          default: false
+
+    SyncState:
+      type: object
+      properties:
+        last_synced:
+          type: string
+          format: date-time
+          nullable: true
+          description: ISO timestamp of last successful sync
+
+    LocalPageInfo:
+      type: object
+      required: [page_id, file_path, mtime]
+      properties:
+        page_id:
+          type: string
+          nullable: true
+          description: Null if new local file
+        file_path:
+          type: string
+        mtime:
+          type: string
+          format: date-time
+          description: File modification time
+
+    RemotePageInfo:
+      type: object
+      required: [page_id, title, last_modified]
+      properties:
+        page_id:
+          type: string
+        title:
+          type: string
+        last_modified:
+          type: string
+          format: date-time
+
+    ChangeDetectionResult:
+      type: object
+      required: [unchanged, to_push, to_pull, conflicts, new_local, new_remote]
+      properties:
+        unchanged:
+          type: array
+          items:
+            type: string
+          description: page_ids with no changes
+        to_push:
+          type: array
+          items:
+            type: string
+          description: page_ids where local changed
+        to_pull:
+          type: array
+          items:
+            type: string
+          description: page_ids where remote changed
+        conflicts:
+          type: array
+          items:
+            type: string
+          description: page_ids where both changed
+        new_local:
+          type: array
+          items:
+            type: string
+          description: file_paths without page_id (new pages)
+        new_remote:
+          type: array
+          items:
+            type: string
+          description: page_ids without local file
+
+    SyncSummary:
+      type: object
+      required: [pushed, pulled, conflicts_resolved, skipped, failed]
+      properties:
+        pushed:
+          type: integer
+          minimum: 0
+        pulled:
+          type: integer
+          minimum: 0
+        conflicts_resolved:
+          type: integer
+          minimum: 0
+        skipped:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        errors:
+          type: array
+          items:
+            type: string
+
+    ExitCode:
+      type: integer
+      enum: [0, 1, 2, 3, 4]
+      description: |
+        0 = Success
+        1 = General error
+        2 = Conflicts
+        3 = Auth failure
+        4 = Network error

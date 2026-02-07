@@ -1,0 +1,318 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "conf-sync-005-extended-models",
+  "title": "Extended Features Domain Models",
+  "description": "Data models for Extended Features (Epic CONF-SYNC-005) - Deletion and Moves",
+
+  "definitions": {
+    "DeletionDirection": {
+      "type": "string",
+      "enum": ["confluence_to_local", "local_to_confluence"],
+      "description": "Direction of deletion propagation"
+    },
+
+    "MoveDirection": {
+      "type": "string",
+      "enum": ["confluence_to_local", "local_to_confluence"],
+      "description": "Direction of move propagation"
+    },
+
+    "DeletionInfo": {
+      "type": "object",
+      "description": "Information about a pending deletion",
+      "required": ["page_id", "title", "direction"],
+      "properties": {
+        "page_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Confluence page ID"
+        },
+        "title": {
+          "type": "string",
+          "description": "Page title for display"
+        },
+        "local_path": {
+          "type": ["string", "null"],
+          "description": "Local file path (null if already deleted)"
+        },
+        "direction": {
+          "$ref": "#/definitions/DeletionDirection"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "MoveInfo": {
+      "type": "object",
+      "description": "Information about a pending move",
+      "required": ["page_id", "title", "old_path", "new_path", "direction"],
+      "properties": {
+        "page_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Confluence page ID"
+        },
+        "title": {
+          "type": "string",
+          "description": "Page title for display"
+        },
+        "old_path": {
+          "type": "string",
+          "description": "Original file path"
+        },
+        "new_path": {
+          "type": "string",
+          "description": "Target file path"
+        },
+        "new_parent_id": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9]+$",
+          "description": "New parent page ID (null for root)"
+        },
+        "direction": {
+          "$ref": "#/definitions/MoveDirection"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "DeletionResult": {
+      "type": "object",
+      "description": "Result of deletion detection phase",
+      "required": ["deleted_in_confluence", "deleted_locally"],
+      "properties": {
+        "deleted_in_confluence": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/DeletionInfo" },
+          "description": "Pages deleted in Confluence (to be removed locally)"
+        },
+        "deleted_locally": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/DeletionInfo" },
+          "description": "Files deleted locally (to be removed from Confluence)"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "MoveResult": {
+      "type": "object",
+      "description": "Result of move detection phase",
+      "required": ["moved_in_confluence", "moved_locally", "conflicts"],
+      "properties": {
+        "moved_in_confluence": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/MoveInfo" },
+          "description": "Pages moved in Confluence (to be moved locally)"
+        },
+        "moved_locally": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/MoveInfo" },
+          "description": "Files moved locally (to update Confluence parent)"
+        },
+        "conflicts": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/MoveInfo" },
+          "description": "Moves with target path conflicts"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "TrackedPage": {
+      "type": "object",
+      "description": "Page tracking entry in state file",
+      "required": ["page_id", "local_path"],
+      "properties": {
+        "page_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "local_path": {
+          "type": "string",
+          "description": "Relative path from local_root"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ExtendedSyncState": {
+      "type": "object",
+      "description": "Extended sync state with page tracking",
+      "properties": {
+        "last_synced": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "ISO timestamp of last successful sync"
+        },
+        "tracked_pages": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/TrackedPage" },
+          "default": [],
+          "description": "List of tracked page_id to local_path mappings"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "PageAncestors": {
+      "type": "object",
+      "description": "Page with ancestor chain from CQL expand",
+      "required": ["id", "title", "ancestors"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "title": {
+          "type": "string"
+        },
+        "ancestors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "title"],
+            "properties": {
+              "id": { "type": "string" },
+              "title": { "type": "string" }
+            }
+          },
+          "description": "Ancestor chain, root first"
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "ExtendedSyncSummary": {
+      "type": "object",
+      "description": "Extended summary including deletions and moves",
+      "required": ["pushed", "pulled", "deleted_local", "deleted_confluence", "moved_local", "moved_confluence", "conflicts_resolved", "skipped", "failed"],
+      "properties": {
+        "pushed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pulled": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deleted_local": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Local files deleted (pages removed from Confluence)"
+        },
+        "deleted_confluence": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Confluence pages trashed (files removed locally)"
+        },
+        "moved_local": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Local files moved (following Confluence hierarchy)"
+        },
+        "moved_confluence": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Confluence parents updated (following local folders)"
+        },
+        "conflicts_resolved": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "errors": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "MergeResult": {
+      "type": "object",
+      "description": "Result of 3-way merge attempt",
+      "required": ["merged_content", "has_conflicts"],
+      "properties": {
+        "merged_content": {
+          "type": "string",
+          "description": "Merged content (may contain conflict markers if has_conflicts=true)"
+        },
+        "has_conflicts": {
+          "type": "boolean",
+          "description": "True if merge has unresolved conflicts"
+        },
+        "conflict_count": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Number of conflict regions"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ConflictInfo": {
+      "type": "object",
+      "description": "Information about a content conflict requiring merge",
+      "required": ["page_id", "title", "local_path", "local_content", "remote_content"],
+      "properties": {
+        "page_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "title": {
+          "type": "string"
+        },
+        "local_path": {
+          "type": "string"
+        },
+        "local_content": {
+          "type": "string",
+          "description": "Current local file content"
+        },
+        "remote_content": {
+          "type": "string",
+          "description": "Current Confluence content"
+        },
+        "baseline_content": {
+          "type": ["string", "null"],
+          "description": "Content at last sync (null if new file)"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ConflictResolutionResult": {
+      "type": "object",
+      "description": "Result of conflict resolution phase",
+      "required": ["auto_merged", "manual_required", "merge_errors"],
+      "properties": {
+        "auto_merged": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "page_ids successfully auto-merged"
+        },
+        "manual_required": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "page_ids with conflict markers requiring manual resolution"
+        },
+        "merge_errors": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "page_ids that failed to merge"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

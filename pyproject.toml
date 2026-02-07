@@ -1,0 +1,110 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "confluence-bidir-sync"
+version = "0.1.0"
+description = "Bidirectional synchronization between local Markdown files and Confluence pages"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Patrick Drolet", email = "217068802+PatD42@users.noreply.github.com"}
+]
+maintainers = [
+    {name = "Patrick Drolet", email = "217068802+PatD42@users.noreply.github.com"}
+]
+keywords = [
+    "confluence",
+    "markdown",
+    "sync",
+    "documentation",
+    "atlassian",
+    "bidirectional",
+    "wiki",
+    "knowledge-base"
+]
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Documentation",
+    "Topic :: Software Development :: Documentation",
+]
+dependencies = [
+    "atlassian-python-api>=4.0.7",
+    "beautifulsoup4>=4.14.0",
+    "lxml>=5.3.0",
+    "python-dotenv>=1.0.0",
+    "PyYAML>=6.0.2",
+    "requests>=2.32.4",
+    "rich>=13.7.0",
+    "typer>=0.12.5,<0.20.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/PatD42/confluence-bidir-sync"
+Repository = "https://github.com/PatD42/confluence-bidir-sync"
+Issues = "https://github.com/PatD42/confluence-bidir-sync/issues"
+Documentation = "https://github.com/PatD42/confluence-bidir-sync#readme"
+Changelog = "https://github.com/PatD42/confluence-bidir-sync/blob/master/CHANGELOG.md"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
+    "pytest-mock>=3.15.1",
+    "pytest-asyncio>=1.0.0",
+    "Faker>=40.0.0",
+]
+dev = [
+    "confluence-bidir-sync[test]",
+    "mypy>=1.0.0",
+    "ruff>=0.1.0",
+    "pip-audit>=2.10.0",
+]
+
+[project.scripts]
+confluence-sync = "src.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --strict-markers"
+markers = [
+    "integration: Integration tests that interact with real Confluence API",
+    "e2e: End-to-end tests for complete workflows",
+    "slow: Slow tests that take a long time to run",
+]
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+asyncio_mode = "strict"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
+ignore = ["E501"]
