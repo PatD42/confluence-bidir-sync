@@ -71,7 +71,6 @@ tmp_debug/
 
 # Internal planning documentation
 docs/epics/
-docs/product/
 
 # Project tracking and temporary files
 tracking/
