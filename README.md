@@ -2,6 +2,10 @@
 
 A Python CLI tool for bidirectional synchronization between Confluence pages and local Markdown files.
 
+<div align="center">
+  <img src=".github/assets/confluence-sync.jpg" alt="Confluence Bidir Sync Banner" width="1400"/>
+</div>
+
 ![Python Version](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Status](https://img.shields.io/badge/status-alpha-orange)
@@ -15,7 +19,7 @@ A Python CLI tool for bidirectional synchronization between Confluence pages and
 - **Single-File Sync**: Sync individual files without affecting others
 - **File Logging**: Optional timestamped log files with local timezone
 - **CQL-Based Discovery**: Efficient page hierarchy discovery using single CQL query
-- **Minimal Frontmatter**: Clean markdown files with only `page_id` in frontmatter
+- **Minimal Frontmatter**: Clean markdown files with only `confluence_url` in frontmatter
 
 ## Requirements
 
