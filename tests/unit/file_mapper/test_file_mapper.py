@@ -1183,7 +1183,7 @@ class TestFileMapperPushHierarchyToConfluence:
     @patch('src.file_mapper.file_mapper.HierarchyBuilder')
     @patch('src.file_mapper.file_mapper.APIWrapper')
     def test_push_hierarchy_handles_duplicate_title_error(self, mock_api_class, mock_hierarchy_class, mock_frontmatter_class, tmp_path):
-        """_push_hierarchy_to_confluence should handle duplicate title errors."""
+        """_push_hierarchy_to_confluence should retry with filename-based title on duplicate."""
         mock_auth = create_mock_auth()
         mock_api = Mock()
         mock_api_class.return_value = mock_api
@@ -1198,12 +1198,22 @@ class TestFileMapperPushHierarchyToConfluence:
         mock_frontmatter_class.parse.return_value = local_page
         mock_frontmatter_class.generate.return_value = "updated content"
 
-        # Mock page operations - raises duplicate error
+        # Mock page operations - first call returns success=False (duplicate),
+        # retry with filename succeeds
         mock_page_ops = Mock()
-        mock_page_ops.create_page.side_effect = Exception("Page already exists in this space")
+        duplicate_result = Mock()
+        duplicate_result.success = False
+        duplicate_result.page_id = 'existing-page-id'
+        duplicate_result.error = "Page 'Page' already exists under same parent"
 
-        # Mock get_page_by_title to return existing page
-        mock_api.get_page_by_title.return_value = {'id': 'existing-page-id'}
+        success_result = Mock()
+        success_result.success = True
+        success_result.page_id = 'new-page-id'
+
+        mock_page_ops.create_page.side_effect = [
+            duplicate_result,   # First call: duplicate detected
+            success_result      # Retry with filename-based title succeeds
+        ]
 
         hierarchy = {'__root__': [str(test_file)]}
         space_config = create_space_config()
@@ -1219,9 +1229,9 @@ class TestFileMapperPushHierarchyToConfluence:
             parent_page_id='parent-123'
         )
 
-        # Should try to find existing page
-        mock_api.get_page_by_title.assert_called_once()
-        # Should update frontmatter with existing page ID
+        # Should have called create_page twice (original title + filename fallback)
+        assert mock_page_ops.create_page.call_count == 2
+        # Should update frontmatter with the NEW page ID, not the existing one
         assert len(files_to_update) == 1
 
     @patch('src.file_mapper.file_mapper.FrontmatterHandler')
@@ -1280,6 +1290,281 @@ class TestFileMapperPushHierarchyToConfluence:
         assert mock_page_ops.create_page.call_count == 2
         # Should update frontmatter for both
         assert len(files_to_update) == 2
+
+
+class TestFileMapperOrphanDirectoryHandling:
+    """Test cases for orphan directory handling in _build_local_hierarchy().
+
+    Validates that subdirectories without a corresponding parent .md file
+    get placeholder files created so the Confluence hierarchy is correct.
+    """
+
+    @patch('src.file_mapper.file_mapper.HierarchyBuilder')
+    @patch('src.file_mapper.file_mapper.APIWrapper')
+    def test_build_hierarchy_creates_placeholder_for_orphan_dir(self, mock_api_class, mock_hierarchy_class, tmp_path):
+        """Files in subdirectory without parent .md should trigger placeholder creation."""
+        mock_auth = create_mock_auth()
+        mapper = FileMapper(mock_auth)
+
+        # Create files ONLY in a subdirectory (no parent .md at root level)
+        sub_dir = tmp_path / "Core-Messaging"
+        sub_dir.mkdir()
+        file1 = sub_dir / "File1.md"
+        file1.write_text("# File1\nContent")
+        file2 = sub_dir / "File2.md"
+        file2.write_text("# File2\nContent")
+
+        local_pages = {
+            str(file1): create_local_page(str(file1), None, '# File1'),
+            str(file2): create_local_page(str(file2), None, '# File2'),
+        }
+        space_config = create_space_config(local_path=str(tmp_path))
+
+        hierarchy = mapper._build_local_hierarchy(local_pages, space_config)
+
+        # __root__ should have a placeholder file for Core-Messaging
+        assert '__root__' in hierarchy, "Should have __root__ key"
+        root_entries = hierarchy['__root__']
+        assert len(root_entries) == 1, f"Should have 1 placeholder entry in root, got {len(root_entries)}"
+
+        placeholder_path = root_entries[0]
+        assert placeholder_path.endswith('Core-Messaging.md'), \
+            f"Placeholder should be Core-Messaging.md, got {placeholder_path}"
+        assert os.path.exists(placeholder_path), "Placeholder file should be created on disk"
+
+        # Read the placeholder content
+        with open(placeholder_path, 'r') as f:
+            content = f.read()
+        assert '# Core Messaging' in content, "Placeholder should have H1 title"
+        assert '## Place holder' in content, "Placeholder should have H2 place holder text"
+
+        # Original files should still be under 'Core-Messaging' key
+        assert 'Core-Messaging' in hierarchy
+        assert len(hierarchy['Core-Messaging']) == 2
+
+    @patch('src.file_mapper.file_mapper.HierarchyBuilder')
+    @patch('src.file_mapper.file_mapper.APIWrapper')
+    def test_build_hierarchy_no_placeholder_when_parent_md_exists(self, mock_api_class, mock_hierarchy_class, tmp_path):
+        """No placeholder needed when parent .md file already exists."""
+        mock_auth = create_mock_auth()
+        mapper = FileMapper(mock_auth)
+
+        # Create parent .md AND subdirectory with child
+        parent_file = tmp_path / "Section.md"
+        parent_file.write_text("# Section\nParent content")
+        sub_dir = tmp_path / "Section"
+        sub_dir.mkdir()
+        child_file = sub_dir / "Child.md"
+        child_file.write_text("# Child\nChild content")
+
+        local_pages = {
+            str(parent_file): create_local_page(str(parent_file), None, '# Section'),
+            str(child_file): create_local_page(str(child_file), None, '# Child'),
+        }
+        space_config = create_space_config(local_path=str(tmp_path))
+
+        hierarchy = mapper._build_local_hierarchy(local_pages, space_config)
+
+        # __root__ should have only the parent file (no placeholder)
+        assert len(hierarchy['__root__']) == 1
+        assert hierarchy['__root__'][0] == str(parent_file)
+
+        # 'Section' should have the child file
+        assert 'Section' in hierarchy
+        assert hierarchy['Section'] == [str(child_file)]
+
+    @patch('src.file_mapper.file_mapper.HierarchyBuilder')
+    @patch('src.file_mapper.file_mapper.APIWrapper')
+    def test_build_hierarchy_deeply_nested_orphan_dirs(self, mock_api_class, mock_hierarchy_class, tmp_path):
+        """Deeply nested orphan directories should create all intermediate placeholders."""
+        mock_auth = create_mock_auth()
+        mapper = FileMapper(mock_auth)
+
+        # Create files at A/B/file.md without A.md or A/B.md
+        nested_dir = tmp_path / "A" / "B"
+        nested_dir.mkdir(parents=True)
+        deep_file = nested_dir / "Deep.md"
+        deep_file.write_text("# Deep\nContent")
+
+        local_pages = {
+            str(deep_file): create_local_page(str(deep_file), None, '# Deep'),
+        }
+        space_config = create_space_config(local_path=str(tmp_path))
+
+        hierarchy = mapper._build_local_hierarchy(local_pages, space_config)
+
+        # Should create placeholders for both A.md and A/B.md
+        assert '__root__' in hierarchy
+        root_entries = hierarchy['__root__']
+        a_placeholder = [e for e in root_entries if 'A.md' in e]
+        assert len(a_placeholder) == 1, "Should create A.md placeholder"
+        assert os.path.exists(a_placeholder[0])
+
+        assert 'A' in hierarchy
+        b_placeholder = [e for e in hierarchy['A'] if 'B.md' in e]
+        assert len(b_placeholder) == 1, "Should create A/B.md placeholder"
+        assert os.path.exists(b_placeholder[0])
+
+        # Original file should remain under A/B
+        assert os.sep.join(['A', 'B']) in hierarchy
+
+
+class TestFileMapperDuplicateTitleHandling:
+    """Test cases for duplicate title handling during page creation.
+
+    Validates that when two files have the same H1 heading, each gets
+    its own unique Confluence page (the second uses filename as title).
+    """
+
+    @patch('src.file_mapper.file_mapper.FrontmatterHandler')
+    @patch('src.file_mapper.file_mapper.HierarchyBuilder')
+    @patch('src.file_mapper.file_mapper.APIWrapper')
+    def test_duplicate_title_gets_unique_page_ids(self, mock_api_class, mock_hierarchy_class, mock_frontmatter_class, tmp_path):
+        """Two files with same H1 should each get their own distinct page_id."""
+        mock_auth = create_mock_auth()
+        mapper = FileMapper(mock_auth)
+
+        # Create two files with the same H1 heading
+        file1 = tmp_path / "Product Overview.md"
+        file1.write_text("# Shared Title\nFirst file content")
+        file2 = tmp_path / "Product Summary.md"
+        file2.write_text("# Shared Title\nSecond file content")
+
+        # Mock frontmatter parsing - both without page_id
+        def mock_parse(file_path, content):
+            if "First" in content or "Overview" in str(file_path):
+                return create_local_page(file_path, None, "# Shared Title\nFirst file content")
+            return create_local_page(file_path, None, "# Shared Title\nSecond file content")
+
+        mock_frontmatter_class.parse.side_effect = mock_parse
+        mock_frontmatter_class.generate.return_value = "updated content"
+
+        # Mock page operations:
+        # - First create with "Shared Title" succeeds
+        # - Second create with "Shared Title" returns duplicate (success=False)
+        # - Retry with filename "Product Summary" succeeds
+        from src.page_operations.models import CreateResult
+        mock_page_ops = Mock()
+        mock_page_ops.create_page.side_effect = [
+            CreateResult(success=True, page_id="page-111", space_key="TEST", title="Shared Title", version=1),
+            CreateResult(success=False, page_id="page-111", space_key="TEST", title="Shared Title",
+                         error="Page 'Shared Title' already exists under same parent"),
+            CreateResult(success=True, page_id="page-222", space_key="TEST", title="Product Summary", version=1),
+        ]
+
+        hierarchy = {'__root__': [str(file1), str(file2)]}
+        space_config = create_space_config(local_path=str(tmp_path))
+        sync_config = create_sync_config()
+        files_to_update = []
+
+        mapper._push_hierarchy_to_confluence(
+            hierarchy=hierarchy,
+            page_ops=mock_page_ops,
+            space_config=space_config,
+            sync_config=sync_config,
+            files_to_update=files_to_update,
+            parent_page_id='parent-123'
+        )
+
+        # Both files should be updated
+        assert len(files_to_update) == 2, f"Both files should be pushed, got {len(files_to_update)}"
+
+        # Verify DIFFERENT page_ids were assigned (not the same!)
+        # files_to_update contains (path, content) tuples
+        paths = [f[0] for f in files_to_update]
+        assert str(file1) in paths
+        assert str(file2) in paths
+
+        # create_page should be called 3 times: success, duplicate, retry-success
+        assert mock_page_ops.create_page.call_count == 3
+
+    @patch('src.file_mapper.file_mapper.FrontmatterHandler')
+    @patch('src.file_mapper.file_mapper.HierarchyBuilder')
+    @patch('src.file_mapper.file_mapper.APIWrapper')
+    def test_duplicate_result_page_id_not_used(self, mock_api_class, mock_hierarchy_class, mock_frontmatter_class, tmp_path):
+        """The page_id from a duplicate CreateResult must NOT be assigned to the second file."""
+        mock_auth = create_mock_auth()
+        mapper = FileMapper(mock_auth)
+
+        file1 = tmp_path / "FileA.md"
+        file1.write_text("# Same Title\nContent A")
+
+        local_page = create_local_page(str(file1), None, "# Same Title\nContent A")
+        mock_frontmatter_class.parse.return_value = local_page
+        mock_frontmatter_class.generate.return_value = "updated"
+
+        from src.page_operations.models import CreateResult
+        mock_page_ops = Mock()
+        # create_page returns success=False with the WRONG page_id
+        mock_page_ops.create_page.side_effect = [
+            CreateResult(success=False, page_id="wrong-existing-id", space_key="TEST",
+                         title="Same Title", error="Page 'Same Title' already exists under same parent"),
+            CreateResult(success=True, page_id="correct-new-id", space_key="TEST",
+                         title="FileA", version=1),
+        ]
+
+        hierarchy = {'__root__': [str(file1)]}
+        space_config = create_space_config(local_path=str(tmp_path))
+        sync_config = create_sync_config()
+        files_to_update = []
+
+        mapper._push_hierarchy_to_confluence(
+            hierarchy=hierarchy,
+            page_ops=mock_page_ops,
+            space_config=space_config,
+            sync_config=sync_config,
+            files_to_update=files_to_update,
+            parent_page_id='parent-123'
+        )
+
+        # The local_page should have the CORRECT page_id, not the duplicate's
+        assert local_page.page_id == "correct-new-id", \
+            f"Should use new page_id, not duplicate's. Got: {local_page.page_id}"
+
+
+class TestFileMapperPushCountAccuracy:
+    """Test cases for accurate push count reporting."""
+
+    @patch('src.file_mapper.file_mapper.PageOperations')
+    @patch('src.file_mapper.file_mapper.HierarchyBuilder')
+    @patch('src.file_mapper.file_mapper.APIWrapper')
+    def test_push_returns_actual_count_not_input_count(self, mock_api_class, mock_hierarchy_class, mock_page_ops_class):
+        """_push_to_confluence should return actual pushed count, not len(local_pages)."""
+        mock_auth = create_mock_auth()
+        mapper = FileMapper(mock_auth)
+
+        local_pages = {
+            '/test/Page1.md': create_local_page('/test/Page1.md', None, '# Page1'),
+            '/test/Page2.md': create_local_page('/test/Page2.md', None, '# Page2'),
+            '/test/Page3.md': create_local_page('/test/Page3.md', None, '# Page3'),
+        }
+        space_config = create_space_config(local_path='/test')
+        sync_config = create_sync_config()
+
+        # Mock _push_hierarchy_to_confluence to only add 2 files (simulating 1 failure)
+        def mock_push_hier(**kwargs):
+            kwargs['files_to_update'].append(('/test/Page1.md', 'content1'))
+            kwargs['files_to_update'].append(('/test/Page2.md', 'content2'))
+            # Page3 NOT added - simulates a failure
+
+        with patch.object(mapper, '_build_local_hierarchy', return_value={'__root__': []}):
+            with patch.object(mapper, '_push_hierarchy_to_confluence', side_effect=mock_push_hier):
+                with patch.object(mapper, '_write_files_atomic'):
+                    result = mapper._push_to_confluence(local_pages, space_config, sync_config)
+
+        # Should return 2, not 3
+        assert result == 2, f"Should return actual pushed count (2), got {result}"
+
+    @patch('src.file_mapper.file_mapper.PageOperations')
+    @patch('src.file_mapper.file_mapper.HierarchyBuilder')
+    @patch('src.file_mapper.file_mapper.APIWrapper')
+    def test_push_returns_zero_for_empty_pages(self, mock_api_class, mock_hierarchy_class, mock_page_ops_class):
+        """_push_to_confluence should return 0 for empty local_pages."""
+        mock_auth = create_mock_auth()
+        mapper = FileMapper(mock_auth)
+
+        result = mapper._push_to_confluence({}, create_space_config(), create_sync_config())
+        assert result == 0
 
 
 class TestFileMapperBidirectionalSync:

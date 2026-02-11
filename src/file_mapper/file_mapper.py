@@ -311,12 +311,12 @@ class FileMapper:
             )
             return SyncResult(pulled_count=pulled_count)
         elif sync_direction == 'push':
-            self._push_to_confluence(
+            actual_pushed = self._push_to_confluence(
                 local_pages=local_pages,
                 space_config=space_config,
                 sync_config=sync_config
             )
-            return SyncResult(pushed_count=len(local_pages))
+            return SyncResult(pushed_count=actual_pushed)
         elif sync_direction == 'bidirectional':
             # For bidirectional sync, we need to merge changes
             logger.info("Bidirectional sync detected - comparing changes")
@@ -570,7 +570,7 @@ class FileMapper:
         local_pages: Dict[str, LocalPage],
         space_config: SpaceConfig,
         sync_config: SyncConfig
-    ) -> None:
+    ) -> int:
         """Push local files to Confluence.
 
         Creates or updates pages in Confluence from local markdown files.
@@ -582,6 +582,9 @@ class FileMapper:
             space_config: Space configuration
             sync_config: Overall sync configuration
 
+        Returns:
+            Number of pages actually pushed (created or updated) in Confluence.
+
         Raises:
             PageAlreadyExistsError: If page with same title already exists
             APIAccessError: If API operations fail
@@ -591,7 +594,7 @@ class FileMapper:
 
         if not local_pages:
             logger.debug("No local pages to push")
-            return
+            return 0
 
         # Create PageOperations for creating/updating pages
         page_ops = PageOperations()
@@ -614,6 +617,7 @@ class FileMapper:
         )
 
         # Update local files with new page_ids atomically
+        actual_pushed = len(files_to_update)
         if files_to_update:
             logger.debug(f"Updating {len(files_to_update)} local file(s) with page IDs")
             self._write_files_atomic(
@@ -621,7 +625,8 @@ class FileMapper:
                 temp_dir=sync_config.temp_dir
             )
 
-        logger.debug(f"Successfully pushed {len(local_pages)} page(s) to Confluence")
+        logger.debug(f"Successfully pushed {actual_pushed} page(s) to Confluence")
+        return actual_pushed
 
     def _build_local_hierarchy(
         self,
@@ -633,12 +638,18 @@ class FileMapper:
         Analyzes the directory structure to determine parent-child relationships.
         Uses the file path structure where subdirectories represent child pages.
 
+        When files exist in subdirectories without a corresponding parent .md file
+        (e.g., docs/Core-Messaging/*.md but no docs/Core-Messaging.md), intermediate
+        directory entries are created so the hierarchy is reachable from __root__.
+
         Args:
             local_pages: Dictionary of local pages by file path
             space_config: Space configuration
 
         Returns:
-            Dictionary mapping parent paths to list of child paths
+            Dictionary mapping parent paths to list of child paths.
+            Intermediate directories without .md files get special entries
+            prefixed with '__dir__:' in their parent's child list.
         """
         hierarchy: Dict[str, List[str]] = {}
         local_path_base = space_config.local_path
@@ -660,6 +671,56 @@ class FileMapper:
             if parent_key not in hierarchy:
                 hierarchy[parent_key] = []
             hierarchy[parent_key].append(file_path)
+
+        # Ensure all intermediate directories are reachable from __root__.
+        # When files exist in subdirectories without a corresponding parent .md
+        # file (e.g., docs/Core-Messaging/*.md but no docs/Core-Messaging.md),
+        # create the missing .md file as a placeholder so the hierarchy is
+        # properly represented both locally and in Confluence.
+        all_dir_keys = sorted(set(hierarchy.keys()) - {'__root__'})
+        for dir_key in all_dir_keys:
+            # Walk up the path, creating placeholder .md files for any
+            # directory level that doesn't have a corresponding file
+            parts = dir_key.split(os.sep)
+            for i in range(len(parts)):
+                sub_dir = os.sep.join(parts[:i + 1])
+                if i == 0:
+                    parent_key = '__root__'
+                else:
+                    parent_key = os.sep.join(parts[:i])
+
+                # Check if any file in parent's list would create this child dir
+                already_covered = False
+                for entry in hierarchy.get(parent_key, []):
+                    entry_rel = os.path.relpath(entry, local_path_base)
+                    entry_filename = os.path.basename(entry_rel)
+                    entry_dir_name = entry_filename[:-3] if entry_filename.endswith('.md') else entry_filename
+                    entry_parent = os.path.dirname(entry_rel)
+                    if entry_parent and entry_parent != '.':
+                        expected_child_dir = os.path.join(entry_parent, entry_dir_name)
+                    else:
+                        expected_child_dir = entry_dir_name
+                    if expected_child_dir == sub_dir:
+                        already_covered = True
+                        break
+
+                if not already_covered:
+                    # Create placeholder .md file for this directory
+                    dir_name = os.path.basename(sub_dir)
+                    title = dir_name.replace('-', ' ').replace('_', ' ')
+                    placeholder_path = os.path.join(local_path_base, sub_dir + '.md')
+
+                    if not os.path.exists(placeholder_path):
+                        logger.info(f"Creating placeholder file for directory '{dir_name}': {placeholder_path}")
+                        placeholder_content = f"# {title}\n\n## Place holder\n"
+                        os.makedirs(os.path.dirname(placeholder_path), exist_ok=True)
+                        with open(placeholder_path, 'w', encoding='utf-8') as f:
+                            f.write(placeholder_content)
+
+                    # Add to hierarchy so it gets processed
+                    if parent_key not in hierarchy:
+                        hierarchy[parent_key] = []
+                    hierarchy[parent_key].append(placeholder_path)
 
         return hierarchy
 
@@ -752,6 +813,28 @@ class FileMapper:
                         markdown_content=local_page.content or "",
                         parent_id=parent_page_id
                     )
+
+                    # Handle duplicate title (create_page returns success=False
+                    # with the existing page's ID - do NOT use that ID)
+                    if not result.success and 'already exists' in (result.error or '').lower():
+                        filename = os.path.basename(file_path)
+                        fallback_title = filename[:-3] if filename.endswith('.md') else filename
+                        logger.warning(
+                            f"Page '{title}' already exists under same parent "
+                            f"- retrying with filename-based title '{fallback_title}'"
+                        )
+                        result = page_ops.create_page(
+                            space_key=space_config.space_key,
+                            title=fallback_title,
+                            markdown_content=local_page.content or "",
+                            parent_id=parent_page_id
+                        )
+                        if not result.success:
+                            raise RuntimeError(
+                                f"Failed to create page with fallback title '{fallback_title}': {result.error}"
+                            )
+                        title = fallback_title
+
                     created_page_id = result.page_id
 
                     # Log the page action (← = Confluence updated from local)
@@ -760,6 +843,7 @@ class FileMapper:
 
                     # Update local_page with new page_id and context for confluence_url
                     local_page.page_id = created_page_id
+                    local_page.title = title
                     local_page.space_key = space_config.space_key
                     local_page.confluence_base_url = self._get_confluence_base_url()
 
@@ -770,36 +854,8 @@ class FileMapper:
                     files_to_update.append((file_path, updated_content))
 
                 except Exception as e:
-                    error_msg = str(e).lower()
-                    # Check if error is due to duplicate page title
-                    if 'already exists' in error_msg or 'duplicate' in error_msg:
-                        logger.warning(f"Page '{title}' already exists - searching for existing page")
-
-                        # Try to find the existing page by title
-                        try:
-                            existing_page = self._api.get_page_by_title(
-                                space_key=space_config.space_key,
-                                title=title
-                            )
-                            created_page_id = existing_page['id']
-                            logger.info(f"Found existing page '{title}' with ID {created_page_id}")
-
-                            # Update local_page with existing page_id and context for confluence_url
-                            local_page.page_id = created_page_id
-                            local_page.space_key = space_config.space_key
-                            local_page.confluence_base_url = self._get_confluence_base_url()
-
-                            # Generate updated content with frontmatter
-                            updated_content = FrontmatterHandler.generate(local_page)
-
-                            # Add to files to update
-                            files_to_update.append((file_path, updated_content))
-                        except Exception as search_error:
-                            logger.error(f"Failed to find existing page '{title}': {search_error}")
-                            raise
-                    else:
-                        logger.error(f"Failed to create page '{title}': {e}")
-                        raise
+                    logger.error(f"Failed to create page '{title}': {e}")
+                    raise
 
             else:
                 # Page already exists - update it using surgical operations
