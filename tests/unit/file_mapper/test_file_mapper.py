@@ -1935,19 +1935,17 @@ class TestStripH1FromContent:
         assert "# My Title" in result  # Second one kept
 
 
-class TestBuildFileListTrackedPaths:
-    """Tests for _build_file_list_from_hierarchy with tracked_pages."""
+class TestBuildFileListLocalPageIds:
+    """Tests for _build_file_list_from_hierarchy with local_page_ids mapping."""
 
-    def test_uses_tracked_path_when_available(self):
-        """Files should be written to tracked path instead of title-derived path."""
+    def test_uses_local_path_when_confluence_url_matches(self):
+        """Files should be written to existing local path when confluence_url matches."""
         mapper = FileMapper(create_mock_auth())
 
         node = create_page_node('123', 'Bentley Systems - Corporate Profile')
         node.markdown_content = "Some content"
 
-        sync_config = SyncConfig(
-            tracked_pages={'123': 'collected_intel/competitor/bentley-systems/profile.md'}
-        )
+        local_page_ids = {'123': 'collected_intel/competitor/bentley-systems/profile.md'}
 
         files_to_write = []
         mapper._build_file_list_from_hierarchy(
@@ -1956,14 +1954,14 @@ class TestBuildFileListTrackedPaths:
             files_to_write=files_to_write,
             space_config=SpaceConfig(space_key='TEST', local_path='collected_intel', parent_page_id='0'),
             page_ids_filter={'123'},
-            sync_config=sync_config
+            local_page_ids=local_page_ids
         )
 
         assert len(files_to_write) == 1
         assert files_to_write[0][0] == 'collected_intel/competitor/bentley-systems/profile.md'
 
-    def test_falls_back_to_title_derived_when_no_tracked_pages(self):
-        """Without tracked_pages, title-derived filenames should be used."""
+    def test_falls_back_to_title_derived_when_no_local_page_ids(self):
+        """Without local_page_ids, title-derived filenames should be used."""
         mapper = FileMapper(create_mock_auth())
 
         node = create_page_node('123', 'My Page')
@@ -1976,23 +1974,20 @@ class TestBuildFileListTrackedPaths:
             files_to_write=files_to_write,
             space_config=SpaceConfig(space_key='TEST', local_path='/base', parent_page_id='0'),
             page_ids_filter={'123'},
-            sync_config=None
+            local_page_ids=None
         )
 
         assert len(files_to_write) == 1
-        # Should use title-derived filename
         assert files_to_write[0][0] == '/base/My-Page.md'
 
-    def test_falls_back_when_page_id_not_in_tracked(self):
-        """Page IDs not in tracked_pages should use title-derived paths."""
+    def test_falls_back_when_page_id_not_in_local(self):
+        """Page IDs not found locally should use title-derived paths."""
         mapper = FileMapper(create_mock_auth())
 
         node = create_page_node('999', 'New Page')
         node.markdown_content = "Content"
 
-        sync_config = SyncConfig(
-            tracked_pages={'123': 'some/other/path.md'}
-        )
+        local_page_ids = {'123': 'some/other/path.md'}
 
         files_to_write = []
         mapper._build_file_list_from_hierarchy(
@@ -2001,14 +1996,14 @@ class TestBuildFileListTrackedPaths:
             files_to_write=files_to_write,
             space_config=SpaceConfig(space_key='TEST', local_path='/base', parent_page_id='0'),
             page_ids_filter={'999'},
-            sync_config=sync_config
+            local_page_ids=local_page_ids
         )
 
         assert len(files_to_write) == 1
         assert files_to_write[0][0] == '/base/New-Page.md'
 
-    def test_child_dir_derived_from_tracked_path(self):
-        """Child directory should be derived from tracked parent's directory."""
+    def test_child_dir_derived_from_local_path(self):
+        """Child directory should be derived from matched parent's directory."""
         mapper = FileMapper(create_mock_auth())
 
         child = create_page_node('456', 'Child Page')
@@ -2018,11 +2013,9 @@ class TestBuildFileListTrackedPaths:
                                    children=[child])
         parent.markdown_content = "Parent content"
 
-        sync_config = SyncConfig(
-            tracked_pages={
-                '123': 'collected_intel/competitor/bentley-systems/profile.md'
-            }
-        )
+        local_page_ids = {
+            '123': 'collected_intel/competitor/bentley-systems/profile.md'
+        }
 
         files_to_write = []
         mapper._build_file_list_from_hierarchy(
@@ -2031,7 +2024,7 @@ class TestBuildFileListTrackedPaths:
             files_to_write=files_to_write,
             space_config=SpaceConfig(space_key='TEST', local_path='collected_intel', parent_page_id='0'),
             page_ids_filter={'123', '456'},
-            sync_config=sync_config
+            local_page_ids=local_page_ids
         )
 
         assert len(files_to_write) == 2
@@ -2040,3 +2033,60 @@ class TestBuildFileListTrackedPaths:
         # Child under parent's directory/profile/ subdirectory
         child_path = files_to_write[1][0]
         assert child_path.startswith('collected_intel/competitor/bentley-systems/profile/')
+
+
+class TestScanLocalPageIds:
+    """Tests for _scan_local_page_ids which builds page_id→path from confluence_url."""
+
+    def test_scan_finds_pages_with_confluence_url(self):
+        """Should extract page_id from confluence_url in frontmatter."""
+        mapper = FileMapper(create_mock_auth())
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a file with confluence_url frontmatter
+            subdir = os.path.join(tmpdir, 'competitor', 'bentley')
+            os.makedirs(subdir)
+            file_path = os.path.join(subdir, 'profile.md')
+            with open(file_path, 'w') as f:
+                f.write("---\nconfluence_url: https://example.atlassian.net/wiki/spaces/TEST/pages/12345\n---\n# Profile\n\nContent")
+
+            result = mapper._scan_local_page_ids(tmpdir)
+
+            assert '12345' in result
+            assert result['12345'] == file_path
+
+    def test_scan_skips_files_without_confluence_url(self):
+        """Files without confluence_url should be skipped."""
+        mapper = FileMapper(create_mock_auth())
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = os.path.join(tmpdir, 'new-file.md')
+            with open(file_path, 'w') as f:
+                f.write("# New File\n\nNo frontmatter here.")
+
+            result = mapper._scan_local_page_ids(tmpdir)
+
+            assert len(result) == 0
+
+    def test_scan_returns_empty_for_nonexistent_dir(self):
+        """Should return empty dict for nonexistent directory."""
+        mapper = FileMapper(create_mock_auth())
+        result = mapper._scan_local_page_ids('/nonexistent/path')
+        assert result == {}
+
+    def test_scan_multiple_files(self):
+        """Should handle multiple files with different page_ids."""
+        mapper = FileMapper(create_mock_auth())
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for i, name in enumerate(['alpha.md', 'beta.md', 'gamma.md']):
+                file_path = os.path.join(tmpdir, name)
+                with open(file_path, 'w') as f:
+                    f.write(f"---\nconfluence_url: https://example.atlassian.net/wiki/spaces/TEST/pages/{100+i}\n---\n# {name}\n")
+
+            result = mapper._scan_local_page_ids(tmpdir)
+
+            assert len(result) == 3
+            assert '100' in result
+            assert '101' in result
+            assert '102' in result

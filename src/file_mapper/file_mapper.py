@@ -384,6 +384,43 @@ class FileMapper:
                 # No force flag - bidirectional sync
                 return 'bidirectional'
 
+    def _scan_local_page_ids(self, local_path: str) -> Dict[str, str]:
+        """Scan local .md files and build page_id → file_path mapping from confluence_url.
+
+        Reads the confluence_url from each file's YAML frontmatter and extracts
+        the page_id. This allows the pull path to write files back to their
+        original locations rather than deriving filenames from Confluence page titles.
+
+        Args:
+            local_path: Root directory to scan for .md files
+
+        Returns:
+            Dict mapping page_id (str) to local file path (str)
+        """
+        page_id_to_path: Dict[str, str] = {}
+
+        if not os.path.exists(local_path):
+            return page_id_to_path
+
+        for root, dirs, files in os.walk(local_path):
+            for filename in files:
+                if not filename.endswith('.md'):
+                    continue
+
+                file_path = os.path.join(root, filename)
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+
+                    page_id = FrontmatterHandler.get_page_id(content)
+                    if page_id:
+                        page_id_to_path[page_id] = file_path
+                except Exception as e:
+                    logger.debug(f"Could not read frontmatter from {file_path}: {e}")
+
+        logger.debug(f"Scanned {len(page_id_to_path)} local files with confluence_url")
+        return page_id_to_path
+
     def _pull_from_confluence(
         self,
         hierarchy: PageNode,
@@ -425,6 +462,10 @@ class FileMapper:
                         file_path = os.path.join(root, filename)
                         existing_files.add(file_path)
 
+        # Scan local files to build page_id → file_path mapping from confluence_url
+        # This ensures pulled pages are written to their original locations
+        local_page_ids = self._scan_local_page_ids(space_config.local_path)
+
         # Build list of files to write (only pages in page_ids_to_pull)
         files_to_write: List[Tuple[str, str]] = []
         self._build_file_list_from_hierarchy(
@@ -433,7 +474,7 @@ class FileMapper:
             files_to_write=files_to_write,
             space_config=space_config,
             page_ids_filter=page_ids_to_pull,
-            sync_config=sync_config
+            local_page_ids=local_page_ids
         )
 
         # Log each file being pulled (→ = local updated from Confluence)
@@ -487,7 +528,7 @@ class FileMapper:
         space_config: SpaceConfig,
         page_ids_filter: Set[str],
         depth: int = 0,
-        sync_config: Optional[SyncConfig] = None
+        local_page_ids: Optional[Dict[str, str]] = None
     ) -> None:
         """Recursively build list of files to write from PageNode hierarchy.
 
@@ -499,7 +540,10 @@ class FileMapper:
             page_ids_filter: Set of page IDs to include (required). Only pages
                              with IDs in this set are included in the output.
             depth: Current recursion depth (default: 0, increments with each level)
-            sync_config: Optional sync config with tracked_pages for path resolution
+            local_page_ids: Optional mapping of page_id → existing local file path,
+                           built by scanning confluence_url in local frontmatter.
+                           When a page_id is found here, the file is written to its
+                           existing path instead of deriving a new path from the title.
 
         Raises:
             FilesystemError: If recursion depth exceeds MAX_RECURSION_DEPTH
@@ -512,10 +556,10 @@ class FileMapper:
                 f'Page hierarchy exceeds maximum depth of {MAX_RECURSION_DEPTH}. '
                 f'This may indicate a circular reference or excessively deep nesting.'
             )
-        # Use tracked path if available, otherwise derive from title
-        tracked_pages = sync_config.tracked_pages if sync_config and sync_config.tracked_pages else None
-        if tracked_pages and node.page_id in tracked_pages:
-            file_path = tracked_pages[node.page_id]
+        # Use existing local path (from confluence_url match) if available,
+        # otherwise derive filename from Confluence page title
+        if local_page_ids and node.page_id in local_page_ids:
+            file_path = local_page_ids[node.page_id]
             filename = os.path.basename(file_path)
         else:
             # Convert title to filename
@@ -572,7 +616,7 @@ class FileMapper:
                     space_config=space_config,
                     page_ids_filter=page_ids_filter,
                     depth=depth + 1,
-                    sync_config=sync_config
+                    local_page_ids=local_page_ids
                 )
 
     def _push_to_confluence(

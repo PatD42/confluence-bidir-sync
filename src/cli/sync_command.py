@@ -400,7 +400,6 @@ class SyncCommand:
                 # - Detects sync direction based on ADR-014
                 # - Performs bidirectional sync with hybrid change detection
                 # Returns SyncResult with conflict information
-                config.tracked_pages = state.tracked_pages if hasattr(state, 'tracked_pages') else None
                 sync_result = self.file_mapper.sync_spaces(config)
 
             # Phase 4: Conflict Resolution
@@ -568,7 +567,6 @@ class SyncCommand:
             # Execute force push using FileMapper
             # FileMapper will detect the force_push flag and push all local
             # content to Confluence without timestamp checks
-            config.tracked_pages = state.tracked_pages if hasattr(state, 'tracked_pages') else None
             sync_result = self.file_mapper.sync_spaces(config)
 
             # Update state on successful push
@@ -640,7 +638,6 @@ class SyncCommand:
             # Execute force pull using FileMapper
             # FileMapper will detect the force_pull flag and pull all Confluence
             # content to local without timestamp checks
-            config.tracked_pages = state.tracked_pages if hasattr(state, 'tracked_pages') else None
             sync_result = self.file_mapper.sync_spaces(config)
 
             # Update state on successful pull
