@@ -169,7 +169,7 @@ class TestMarkdownToXHTML:
 
         # Get the second call (pandoc conversion, not 'which')
         pandoc_call = mock_run.call_args_list[1]
-        assert pandoc_call[0][0] == ["pandoc", "-f", "markdown", "-t", "html"]
+        assert pandoc_call[0][0] == ["pandoc", "-f", "markdown", "-t", "html", "--wrap=none"]
         assert pandoc_call[1]['input'] == "# Test"
         assert pandoc_call[1]['text'] is True
         assert pandoc_call[1]['capture_output'] is True

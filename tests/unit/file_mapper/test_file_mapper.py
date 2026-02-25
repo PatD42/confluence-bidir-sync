@@ -1881,3 +1881,162 @@ class TestForcePushFileLogging:
 
                     # Should have logged the unchanged file with = indicator
                     assert any('=' in msg and 'Page.md' in msg for msg in printed), f"Printed: {printed}"
+
+
+class TestStripH1FromContent:
+    """Tests for _strip_h1_from_content helper."""
+
+    def test_strip_matching_h1(self):
+        """H1 that matches derived title should be stripped."""
+        mapper = FileMapper(create_mock_auth())
+        content = "# My Page Title\n\nSome body content here.\n\nMore content."
+        result = mapper._strip_h1_from_content(content, "My Page Title")
+        assert result == "Some body content here.\n\nMore content."
+
+    def test_no_strip_when_h1_does_not_match(self):
+        """H1 that doesn't match title should NOT be stripped."""
+        mapper = FileMapper(create_mock_auth())
+        content = "# Different Title\n\nBody content."
+        result = mapper._strip_h1_from_content(content, "My Page Title")
+        assert result == content
+
+    def test_no_strip_when_no_h1(self):
+        """Content without H1 should be returned as-is."""
+        mapper = FileMapper(create_mock_auth())
+        content = "Just some body content.\n\nNo heading here."
+        result = mapper._strip_h1_from_content(content, "My Page Title")
+        assert result == content
+
+    def test_empty_content(self):
+        """Empty content should be returned as-is."""
+        mapper = FileMapper(create_mock_auth())
+        result = mapper._strip_h1_from_content("", "Title")
+        assert result == ""
+
+    def test_none_content(self):
+        """None content should be returned as-is."""
+        mapper = FileMapper(create_mock_auth())
+        result = mapper._strip_h1_from_content(None, "Title")
+        assert result is None
+
+    def test_strip_h1_with_leading_blank_lines(self):
+        """H1 preceded by blank lines should still be stripped if matching."""
+        mapper = FileMapper(create_mock_auth())
+        content = "\n\n# My Title\n\nBody content."
+        result = mapper._strip_h1_from_content(content, "My Title")
+        assert result == "Body content."
+
+    def test_only_first_matching_h1_stripped(self):
+        """Only the first H1 should be stripped, even if there are more."""
+        mapper = FileMapper(create_mock_auth())
+        content = "# My Title\n\n## Section\n\n# My Title\n\nDuplicate."
+        result = mapper._strip_h1_from_content(content, "My Title")
+        assert "## Section" in result
+        assert "# My Title" in result  # Second one kept
+
+
+class TestBuildFileListTrackedPaths:
+    """Tests for _build_file_list_from_hierarchy with tracked_pages."""
+
+    def test_uses_tracked_path_when_available(self):
+        """Files should be written to tracked path instead of title-derived path."""
+        mapper = FileMapper(create_mock_auth())
+
+        node = create_page_node('123', 'Bentley Systems - Corporate Profile')
+        node.markdown_content = "Some content"
+
+        sync_config = SyncConfig(
+            tracked_pages={'123': 'collected_intel/competitor/bentley-systems/profile.md'}
+        )
+
+        files_to_write = []
+        mapper._build_file_list_from_hierarchy(
+            node=node,
+            parent_path='collected_intel',
+            files_to_write=files_to_write,
+            space_config=SpaceConfig(space_key='TEST', local_path='collected_intel', parent_page_id='0'),
+            page_ids_filter={'123'},
+            sync_config=sync_config
+        )
+
+        assert len(files_to_write) == 1
+        assert files_to_write[0][0] == 'collected_intel/competitor/bentley-systems/profile.md'
+
+    def test_falls_back_to_title_derived_when_no_tracked_pages(self):
+        """Without tracked_pages, title-derived filenames should be used."""
+        mapper = FileMapper(create_mock_auth())
+
+        node = create_page_node('123', 'My Page')
+        node.markdown_content = "Content"
+
+        files_to_write = []
+        mapper._build_file_list_from_hierarchy(
+            node=node,
+            parent_path='/base',
+            files_to_write=files_to_write,
+            space_config=SpaceConfig(space_key='TEST', local_path='/base', parent_page_id='0'),
+            page_ids_filter={'123'},
+            sync_config=None
+        )
+
+        assert len(files_to_write) == 1
+        # Should use title-derived filename
+        assert files_to_write[0][0] == '/base/My-Page.md'
+
+    def test_falls_back_when_page_id_not_in_tracked(self):
+        """Page IDs not in tracked_pages should use title-derived paths."""
+        mapper = FileMapper(create_mock_auth())
+
+        node = create_page_node('999', 'New Page')
+        node.markdown_content = "Content"
+
+        sync_config = SyncConfig(
+            tracked_pages={'123': 'some/other/path.md'}
+        )
+
+        files_to_write = []
+        mapper._build_file_list_from_hierarchy(
+            node=node,
+            parent_path='/base',
+            files_to_write=files_to_write,
+            space_config=SpaceConfig(space_key='TEST', local_path='/base', parent_page_id='0'),
+            page_ids_filter={'999'},
+            sync_config=sync_config
+        )
+
+        assert len(files_to_write) == 1
+        assert files_to_write[0][0] == '/base/New-Page.md'
+
+    def test_child_dir_derived_from_tracked_path(self):
+        """Child directory should be derived from tracked parent's directory."""
+        mapper = FileMapper(create_mock_auth())
+
+        child = create_page_node('456', 'Child Page')
+        child.markdown_content = "Child content"
+
+        parent = create_page_node('123', 'Bentley Systems - Corporate Profile',
+                                   children=[child])
+        parent.markdown_content = "Parent content"
+
+        sync_config = SyncConfig(
+            tracked_pages={
+                '123': 'collected_intel/competitor/bentley-systems/profile.md'
+            }
+        )
+
+        files_to_write = []
+        mapper._build_file_list_from_hierarchy(
+            node=parent,
+            parent_path='collected_intel',
+            files_to_write=files_to_write,
+            space_config=SpaceConfig(space_key='TEST', local_path='collected_intel', parent_page_id='0'),
+            page_ids_filter={'123', '456'},
+            sync_config=sync_config
+        )
+
+        assert len(files_to_write) == 2
+        # Parent at tracked path
+        assert files_to_write[0][0] == 'collected_intel/competitor/bentley-systems/profile.md'
+        # Child under parent's directory/profile/ subdirectory
+        child_path = files_to_write[1][0]
+        assert child_path.startswith('collected_intel/competitor/bentley-systems/profile/')

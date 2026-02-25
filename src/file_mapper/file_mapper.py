@@ -432,7 +432,8 @@ class FileMapper:
             parent_path=space_config.local_path,
             files_to_write=files_to_write,
             space_config=space_config,
-            page_ids_filter=page_ids_to_pull
+            page_ids_filter=page_ids_to_pull,
+            sync_config=sync_config
         )
 
         # Log each file being pulled (→ = local updated from Confluence)
@@ -485,7 +486,8 @@ class FileMapper:
         files_to_write: List[Tuple[str, str]],
         space_config: SpaceConfig,
         page_ids_filter: Set[str],
-        depth: int = 0
+        depth: int = 0,
+        sync_config: Optional[SyncConfig] = None
     ) -> None:
         """Recursively build list of files to write from PageNode hierarchy.
 
@@ -497,6 +499,7 @@ class FileMapper:
             page_ids_filter: Set of page IDs to include (required). Only pages
                              with IDs in this set are included in the output.
             depth: Current recursion depth (default: 0, increments with each level)
+            sync_config: Optional sync config with tracked_pages for path resolution
 
         Raises:
             FilesystemError: If recursion depth exceeds MAX_RECURSION_DEPTH
@@ -509,9 +512,15 @@ class FileMapper:
                 f'Page hierarchy exceeds maximum depth of {MAX_RECURSION_DEPTH}. '
                 f'This may indicate a circular reference or excessively deep nesting.'
             )
-        # Convert title to filename
-        filename = FilesafeConverter.title_to_filename(node.title)
-        file_path = os.path.join(parent_path, filename)
+        # Use tracked path if available, otherwise derive from title
+        tracked_pages = sync_config.tracked_pages if sync_config and sync_config.tracked_pages else None
+        if tracked_pages and node.page_id in tracked_pages:
+            file_path = tracked_pages[node.page_id]
+            filename = os.path.basename(file_path)
+        else:
+            # Convert title to filename
+            filename = FilesafeConverter.title_to_filename(node.title)
+            file_path = os.path.join(parent_path, filename)
 
         # Only include this page if page_id is in the filter
         include_this_page = node.page_id in page_ids_filter
@@ -550,7 +559,7 @@ class FileMapper:
                 # Create subdirectory for children
                 # Remove .md extension from filename for directory name
                 dir_name = filename[:-3] if filename.endswith('.md') else filename
-                child_dir = os.path.join(parent_path, dir_name)
+                child_dir = os.path.join(os.path.dirname(file_path), dir_name)
             else:
                 # Page is excluded - children stay in the same directory
                 child_dir = parent_path
@@ -562,7 +571,8 @@ class FileMapper:
                     files_to_write=files_to_write,
                     space_config=space_config,
                     page_ids_filter=page_ids_filter,
-                    depth=depth + 1
+                    depth=depth + 1,
+                    sync_config=sync_config
                 )
 
     def _push_to_confluence(
@@ -801,6 +811,10 @@ class FileMapper:
             # Derive title from content (H1 heading or filename)
             title = self._derive_title_from_content(local_page.content, file_path)
 
+            # Strip H1 from content to avoid duplicate display in Confluence
+            # (H1 becomes the page title metadata, keeping it in body is redundant)
+            push_content = self._strip_h1_from_content(local_page.content or "", title)
+
             # Check if page needs to be created (no page_id)
             if not local_page.page_id:
                 logger.debug(f"Creating new page in Confluence: {title}")
@@ -810,7 +824,7 @@ class FileMapper:
                     result = page_ops.create_page(
                         space_key=space_config.space_key,
                         title=title,
-                        markdown_content=local_page.content or "",
+                        markdown_content=push_content,
                         parent_id=parent_page_id
                     )
 
@@ -826,7 +840,7 @@ class FileMapper:
                         result = page_ops.create_page(
                             space_key=space_config.space_key,
                             title=fallback_title,
-                            markdown_content=local_page.content or "",
+                            markdown_content=push_content,
                             parent_id=parent_page_id
                         )
                         if not result.success:
@@ -879,11 +893,14 @@ class FileMapper:
 
                         # Check if local content differs from baseline
                         if local_content_normalized != baseline_content_normalized:
+                            # Strip H1 from both new and baseline content before surgical update
+                            baseline_body = self._strip_h1_from_content(baseline_parsed.content or "", title)
+
                             # Use ADF surgical update with baseline for accurate diffing
                             result = page_ops.update_page_surgical_adf(
                                 page_id=local_page.page_id,
-                                new_markdown_content=local_page.content or "",
-                                baseline_markdown=baseline_parsed.content or "",
+                                new_markdown_content=push_content,
+                                baseline_markdown=baseline_body,
                             )
 
                             if result.success:
@@ -905,7 +922,7 @@ class FileMapper:
                         logger.warning(f"No baseline for page {local_page.page_id} - using full replacement")
                         result = page_ops.update_page_surgical_adf(
                             page_id=local_page.page_id,
-                            new_markdown_content=local_page.content or "",
+                            new_markdown_content=push_content,
                             baseline_markdown=None,  # Triggers full replacement
                         )
 
@@ -1204,6 +1221,10 @@ class FileMapper:
                 if sync_config.get_baseline:
                     baseline_content = sync_config.get_baseline(local_page.page_id)
 
+                # Derive title and strip H1 from content for push to Confluence
+                bidir_title = self._derive_title_from_content(local_page.content, file_path)
+                bidir_push_content = self._strip_h1_from_content(local_page.content or "", bidir_title)
+
                 # Normalize content for comparison (strip whitespace)
                 local_content_normalized = (local_page.content or "").strip()
 
@@ -1215,11 +1236,14 @@ class FileMapper:
 
                     # Check if local content differs from baseline
                     if local_content_normalized != baseline_content_normalized:
+                        # Strip H1 from baseline too for consistent diffing
+                        baseline_body = self._strip_h1_from_content(baseline_parsed.content or "", bidir_title)
+
                         # Use ADF surgical update with baseline for accurate diffing
                         result = page_ops.update_page_surgical_adf(
                             page_id=local_page.page_id,
-                            new_markdown_content=local_page.content or "",
-                            baseline_markdown=baseline_parsed.content or "",
+                            new_markdown_content=bidir_push_content,
+                            baseline_markdown=baseline_body,
                         )
 
                         if result.success:
@@ -1242,7 +1266,7 @@ class FileMapper:
                     logger.warning(f"No baseline for page {local_page.page_id} - using full replacement")
                     result = page_ops.update_page_surgical_adf(
                         page_id=local_page.page_id,
-                        new_markdown_content=local_page.content or "",
+                        new_markdown_content=bidir_push_content,
                         baseline_markdown=None,  # Triggers full replacement
                     )
 
@@ -1406,6 +1430,44 @@ class FileMapper:
         except Exception as e:
             logger.warning(f"Baseline check failed for remote page {page_node.page_id}: {e}, assuming modified")
             return True
+
+    def _strip_h1_from_content(self, content: str, title: str) -> str:
+        """Strip the first H1 heading from markdown if it matches the derived title.
+
+        When pushing to Confluence, the H1 becomes the page title (metadata).
+        Keeping it in the body causes duplicate display. This strips the H1
+        only if it matches the title we're using for the page.
+
+        Args:
+            content: Markdown content that may start with an H1
+            title: The derived page title to match against
+
+        Returns:
+            Content with the matching H1 removed, or unchanged if no match
+        """
+        if not content:
+            return content
+
+        lines = content.split('\n')
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if not stripped:
+                continue  # Skip blank lines before H1
+            # Check if this is an H1 heading
+            h1_match = re.match(r'^#\s+(.+)$', stripped)
+            if h1_match:
+                h1_text = h1_match.group(1).strip()
+                if h1_text == title:
+                    # Remove this line and any immediately following blank line
+                    remaining = lines[i + 1:]
+                    # Strip leading blank lines after the H1
+                    while remaining and not remaining[0].strip():
+                        remaining.pop(0)
+                    return '\n'.join(remaining)
+            # First non-blank line is not an H1 — don't strip anything
+            break
+
+        return content
 
     def _derive_title_from_content(self, content: str, file_path: str) -> str:
         """Derive page title from markdown content or filename.

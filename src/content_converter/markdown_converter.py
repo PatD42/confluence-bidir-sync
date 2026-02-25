@@ -163,7 +163,7 @@ class MarkdownConverter:
 
         try:
             result = subprocess.run(
-                ["pandoc", "-f", "markdown", "-t", "html"],
+                ["pandoc", "-f", "markdown", "-t", "html", "--wrap=none"],
                 input=markdown,
                 text=True,
                 capture_output=True,

@@ -6,7 +6,7 @@ All models use dataclasses for clean, type-safe data structures.
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional
 
 
 @dataclass
@@ -132,3 +132,4 @@ class SyncConfig:
     temp_dir: str = ".confluence-sync/temp"
     last_synced: Optional[str] = None
     get_baseline: Optional[Callable[[str], Optional[str]]] = None
+    tracked_pages: Optional[Dict[str, str]] = None
